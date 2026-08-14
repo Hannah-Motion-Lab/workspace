@@ -1,0 +1,16 @@
+# Sub-proyectos (son sus propios repos)
+hannah-backend/
+hannah-frontend/
+hannah-motion-lab/
+hannah-desktop/
+# venv del motion sidecar
+.venv/
+# artefactos locales
+*.log
+.hannah-launch.log
+.hannah.lock
+# tooling local
+CLAUDE.md
+.claude/
+memory/
+assets/**/*.npz

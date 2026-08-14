@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Hannah — lanzador de la compañera flotante (overlay).
+# Portable: deriva su ubicación (sin rutas absolutas), autodetecta monitor y navegador.
+# Levanta (si faltan) Ollama + sidecars + backend + Vite, abre el frontend en modo-app
+# y lo coloca flotante/encima. En Hyprland usa hyprctl; en otros entornos degrada a
+# ventana normal (el adaptador X11/otros se añade aparte).
+set -u
+
+# Raíz del proyecto = carpeta de este script (portable).
+ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+BACK="$ROOT/hannah-backend"
+FRONT="$ROOT/hannah-frontend"
+LAB="$ROOT/hannah-motion-lab"
+LOG="$ROOT/.hannah-launch.log"
+PROFILE="${HANNAH_PROFILE:-$HOME/.hannah-browser}"     # perfil Firefox/Zen (Gecko)
+MONITOR="${HANNAH_MONITOR:-}"                            # vacío = autodetectar el enfocado
+URL="http://localhost:5173/?overlay=1"
+
+up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
+has() { command -v "$1" >/dev/null 2>&1; }
+hannah_addr() {
+  has hyprctl && hyprctl clients -j 2>/dev/null | python3 -c \
+    "import sys,json;print(next((w['address'] for w in json.load(sys.stdin) if (w.get('title') or '').startswith('Hannah')),''))"
+}
+
+# Coloca la ventana flotante a pantalla completa en el monitor destino (Hyprland).
+# Monitor = $MONITOR si se fijó, si no el ENFOCADO (autodetección, sin hardcode).
+place_window() {
+  local addr="$1"; has hyprctl || return 0
+  local geo
+  geo="$(hyprctl monitors -j | python3 -c "
+import sys,json
+ms=json.load(sys.stdin); name='$MONITOR'
+m=(next((m for m in ms if m['name']==name), None) if name else None) or next((m for m in ms if m.get('focused')), ms[0])
+print(m['x'],m['y'],m['width'],m['height'])")"
+  read -r MX MY MW MH <<<"$geo"
+  hyprctl dispatch setfloating "address:$addr" >/dev/null
+  hyprctl dispatch resizewindowpixel "exact $MW $MH,address:$addr" >/dev/null
+  hyprctl dispatch movewindowpixel "exact $MX $MY,address:$addr" >/dev/null
+  hyprctl dispatch pin "address:$addr" >/dev/null
+}
+
+echo "[hannah] $(date) ROOT=$ROOT" >>"$LOG"
+
+# Instancia única.
+exec 9>"$ROOT/.hannah.lock"; flock -n 9 || { echo "[hannah] ya lanzándose" >>"$LOG"; exit 0; }
+
+# Si ya está abierta (Hyprland), re-enfocar y salir.
+EXIST="$(hannah_addr)"
+if [ -n "$EXIST" ]; then place_window "$EXIST"; has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null; exit 0; fi
+
+# ── Servicios (idempotente) ──────────────────────────────────────────────
+has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 & }
+up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & )
+up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & )
+up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
+up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & )
+up 5173 || ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 & )
+
+for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && break; sleep 1; done
+
+# ── Navegador en modo-app ────────────────────────────────────────────────
+open_browser() {
+  local b
+  # 1) Chromium-based -> --app (ventana limpia, cross-platform); permisos/autoplay por flags.
+  for b in brave google-chrome-stable google-chrome chromium chromium-browser vivaldi-stable microsoft-edge-stable thorium; do
+    if has "$b"; then
+      echo "[hannah] browser=$b (chromium)" >>"$LOG"
+      setsid "$b" --app="$URL" --class=Hannah \
+        --user-data-dir="${PROFILE}-chromium" \
+        --use-fake-ui-for-media-stream --autoplay-policy=no-user-gesture-required \
+        >/dev/null 2>&1 & return
+    fi
+  done
+  # 2) Firefox/Gecko -> perfil dedicado (user.js con permisos pre-otorgados).
+  for b in zen-browser firefox librewolf floorp waterfox; do
+    if has "$b"; then
+      echo "[hannah] browser=$b (firefox)" >>"$LOG"
+      setsid "$b" --no-remote --profile "$PROFILE" --new-window "$URL" >/dev/null 2>&1 & return
+    fi
+  done
+  echo "[hannah] NO se encontró navegador" >>"$LOG"
+}
+open_browser
+
+# ── Colocar la ventana (Hyprland; en otros entornos, no-op) ───────────────
+ADDR=""
+for _ in $(seq 1 40); do ADDR="$(hannah_addr)"; [ -n "$ADDR" ] && break; sleep 1; done
+[ -n "$ADDR" ] && place_window "$ADDR"
+echo "[hannah] listo" >>"$LOG"
