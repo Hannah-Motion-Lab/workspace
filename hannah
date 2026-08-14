@@ -50,12 +50,15 @@ EXIST="$(hannah_addr)"
 if [ -n "$EXIST" ]; then place_window "$EXIST"; has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null; exit 0; fi
 
 # ── Servicios (idempotente) ──────────────────────────────────────────────
-has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 & }
-up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & )
-up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & )
-up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
-up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & )
-up 5173 || ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 & )
+# Nota: los hijos backgrounded cierran el fd 9 (9>&-) para NO heredar el candado; si lo
+# heredaran, el lock quedaría tomado mientras vivan (vite/backend/etc.) y Super+H nunca
+# podría reabrir ("ya lanzándose" eterno).
+has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 9>&- & }
+up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 9>&- & )
+up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 9>&- & )
+up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 9>&- & )
+up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 9>&- & )
+up 5173 || ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 9>&- & )
 
 for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && break; sleep 1; done
 
@@ -69,14 +72,14 @@ open_browser() {
       setsid "$b" --app="$URL" --class=Hannah \
         --user-data-dir="${PROFILE}-chromium" \
         --use-fake-ui-for-media-stream --autoplay-policy=no-user-gesture-required \
-        >/dev/null 2>&1 & return
+        >/dev/null 2>&1 9>&- & return
     fi
   done
   # 2) Firefox/Gecko -> perfil dedicado (user.js con permisos pre-otorgados).
   for b in zen-browser firefox librewolf floorp waterfox; do
     if has "$b"; then
       echo "[hannah] browser=$b (firefox)" >>"$LOG"
-      setsid "$b" --no-remote --profile "$PROFILE" --new-window "$URL" >/dev/null 2>&1 & return
+      setsid "$b" --no-remote --profile "$PROFILE" --new-window "$URL" >/dev/null 2>&1 9>&- & return
     fi
   done
   echo "[hannah] NO se encontró navegador" >>"$LOG"
