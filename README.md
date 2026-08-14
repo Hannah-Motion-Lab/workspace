@@ -28,8 +28,12 @@ Whisper, Kokoro, YOLO/VLM). Además puede **usar internet** y **una terminal rea
 
 ## Requisitos
 
-- **Ollama** con `llama3.1:8b` (chat) y `nomic-embed-text` (memoria); `qwen2.5:7b`
-  recomendado si vas a usar **tools**.
+> **Objetivo de VRAM: ≤16GB** — todo el stack (LLM + embeddings + TTS + ASR + visión +
+> motion) cabe en 16GB o menos. Por eso el LLM es un **7B** y los **tools usan un
+> protocolo de acciones por tags** (fiable en modelos chicos), no function-calling.
+
+- **Ollama** con `qwen2.5:7b` (chat + tools, ~5GB) y `nomic-embed-text` (memoria);
+  `llama3.1:8b` sirve si no usas tools.
 - Python 3.12 + venvs para los sidecars (ver `hannah-backend/README.md` y CLAUDE.md).
 - Node 20+. Para la app Electron: nada extra (trae Chromium).
 - Overlay en Linux: `hyprctl` (Hyprland) **o** `xdotool`+`wmctrl` (X11).
