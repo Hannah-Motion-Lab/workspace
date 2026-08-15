@@ -55,7 +55,7 @@ voz (`ELEVENLABS_VOICE_ID`: `af_*`/`am_*` inglés, `ef_*`/`em_*` español…).
 
 - **Ollama** con `qwen2.5:7b` (chat + tools, ~5GB) y `nomic-embed-text` (memoria);
   `llama3.1:8b` sirve si no usas tools.
-- Python 3.12 + venvs para los sidecars (ver `hannah-backend/README.md` y CLAUDE.md).
+- Python 3.12 + venvs para los sidecars (detalle en `hannah-backend/README.md`).
 - Node 20+. Para la app Electron: nada extra (trae Chromium).
 - Overlay en Linux: `hyprctl` (Hyprland) **o** `xdotool`+`wmctrl` (X11).
 
