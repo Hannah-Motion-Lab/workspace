@@ -13,7 +13,7 @@ Whisper, Kokoro, YOLO/VLM). Además puede **usar internet** y **una terminal rea
 | `hannah-frontend/` | Cliente React + three.js: avatar VRoid/VRM, mic, cámara, HUD, panel de terminal. | React/Vite |
 | `hannah-motion-lab/` | Modelo texto→movimiento (gestos) servido en :8005. | Python |
 | `hannah-desktop/` | **App de escritorio Electron** (overlay universal Win/Mac/Linux). | Electron |
-| `hannah` | **Launcher** (modo navegador): levanta todo y abre el overlay en Linux. | Bash |
+| `hannah` | **Launcher**: levanta todo el stack y abre el overlay (por defecto, la app). | Bash |
 
 ## Arquitectura en 30s
 
@@ -66,12 +66,13 @@ voz (`ELEVENLABS_VOICE_ID`: `af_*`/`am_*` inglés, `ef_*`/`em_*` español…).
 cd hannah-backend  && npm install && cp .env.example .env
 cd ../hannah-frontend && npm install --legacy-peer-deps   # ojo: sin el flag falla (vite 5 vs plugin-basic-ssl)
 
-# 2) modo navegador (Linux) — levanta todo y abre el overlay:
-./hannah
+# 2) levanta todo (Ollama, sidecars, backend, Vite) y abre el overlay:
+./hannah                       # abre la app Electron; si ya está abierta, la enfoca
+HANNAH_MODE=browser ./hannah   # alternativa liviana: el frontend en un navegador
 
-# 2') o la app de escritorio (Win/Mac/Linux):
-cd hannah-frontend && npm run build        # genera dist/
-cd ../hannah-desktop && npm install && npm start
+# 2') o la app de escritorio sola (Win/Mac/Linux), con el backend ya corriendo:
+cd hannah-desktop && npm install && npm run start:dev   # usa el Vite de :5173
+cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # sin Vite, desde dist/
 ```
 
 ## Tools (internet + terminal)

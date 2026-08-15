@@ -15,6 +15,13 @@ LOG="$ROOT/.hannah-launch.log"
 PROFILE="${HANNAH_PROFILE:-$HOME/.hannah-browser}"     # perfil Firefox/Zen (Gecko)
 MONITOR="${HANNAH_MONITOR:-}"                            # vacío = autodetectar el enfocado
 URL="http://localhost:5173/?overlay=1"
+DESK="$ROOT/hannah-desktop"
+# Cómo se abre el overlay:
+#   app     (por defecto) -> la app Electron: widget flotante, se coloca sola, funciona igual
+#                            en GNOME/KDE/XFCE/Hyprland (fuerza XWayland).
+#   browser               -> el frontend en un navegador en modo-app; más liviano, pero para
+#                            que flote depende de hyprctl/wmctrl y en Wayland nativo no puede.
+MODE="${HANNAH_MODE:-app}"
 
 up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # El overlay necesita Vite en HTTP (HANNAH_HTTP=1). Si hay un Vite en 5173 pero en HTTPS
@@ -107,14 +114,26 @@ print(m['x'],m['y'],m['width'],m['height'])")"
   hyprctl dispatch pin "address:$addr" >/dev/null
 }
 
-echo "[hannah] $(date) ROOT=$ROOT" >>"$LOG"
+echo "[hannah] $(date) ROOT=$ROOT modo=$MODE" >>"$LOG"
+
+# Si se pidió la app pero no está instalada, no fallar: degradar al navegador y decirlo.
+if [ "$MODE" = app ] && [ ! -x "$DESK/node_modules/electron/dist/electron" ]; then
+  echo "[hannah] hannah-desktop sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"
+  MODE=browser
+fi
 
 # Instancia única.
 exec 9>"$ROOT/.hannah.lock"; flock -n 9 || { echo "[hannah] ya lanzándose" >>"$LOG"; exit 0; }
 
 # Si ya está abierta (Hyprland), re-enfocar y salir.
+# En modo app NO se re-coloca: la app es un widget que recuerda dónde la dejaste, y
+# place_window la estiraría a pantalla completa (que es lo que quiere el modo navegador).
 EXIST="$(hannah_addr)"
-if [ -n "$EXIST" ]; then place_window "$EXIST"; has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null; exit 0; fi
+if [ -n "$EXIST" ]; then
+  [ "$MODE" = browser ] && place_window "$EXIST"
+  has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
+  exit 0
+fi
 
 # ── Servicios (idempotente) ──────────────────────────────────────────────
 # Nota: los hijos backgrounded cierran el fd 9 (9>&-) para NO heredar el candado; si lo
@@ -167,18 +186,25 @@ open_browser() {
   done
   echo "[hannah] NO se encontró navegador" >>"$LOG"
 }
-open_browser
-
-# ── Colocar la ventana encima ─────────────────────────────────────────────
-if has hyprctl; then
-  ADDR=""
-  for _ in $(seq 1 40); do ADDR="$(hannah_addr)"; [ -n "$ADDR" ] && break; sleep 1; done
-  [ -n "$ADDR" ] && place_window "$ADDR"
+if [ "$MODE" = app ]; then
+  # La app Electron se coloca sola (esquina del monitor del cursor, encima y en todos los
+  # escritorios) y tiene instancia única: si ya estaba abierta, este arranque solo la enfoca.
+  # Por eso acá no hay que buscar la ventana ni colocarla.
+  echo "[hannah] abriendo la app de escritorio" >>"$LOG"
+  ( cd "$DESK" && HANNAH_DEV=1 setsid npm start >>"$LOG" 2>&1 9>&- & )
 else
-  # Otros escritorios: no hay forma de esperar la ventana por dirección, así que damos unos
-  # segundos a que abra y fijamos por título. (Antes se giraba 40s en vano y se rendía.)
-  sleep 4
-  place_window_generic \
-    || echo "[hannah] tip: la app de escritorio (hannah-desktop) flota sin depender de esto" >>"$LOG"
+  open_browser
+  # ── Colocar la ventana encima ─────────────────────────────────────────────
+  if has hyprctl; then
+    ADDR=""
+    for _ in $(seq 1 40); do ADDR="$(hannah_addr)"; [ -n "$ADDR" ] && break; sleep 1; done
+    [ -n "$ADDR" ] && place_window "$ADDR"
+  else
+    # Otros escritorios: no hay forma de esperar la ventana por dirección, así que damos unos
+    # segundos a que abra y fijamos por título. (Antes se giraba 40s en vano y se rendía.)
+    sleep 4
+    place_window_generic \
+      || echo "[hannah] tip: la app de escritorio (hannah-desktop) flota sin depender de esto" >>"$LOG"
+  fi
 fi
 echo "[hannah] listo" >>"$LOG"
