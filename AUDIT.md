@@ -1,258 +1,258 @@
-# Auditoría del proyecto Hannah — 2026-08-15
+# Hannah project audit — 2026-08-15
 
-**Alcance:** los 4 repos (backend, frontend, desktop, motion-lab) + launcher + configs (~9.6k líneas).
-**Método:** 10 auditores automáticos en paralelo (duplicación, prácticas Node/React, sobreingeniería,
-Python, seguridad, consistencia, tests) → 101 hallazgos → dedup → **verificación manual de los
-críticos contra el código real**.
-**Resultado:** 6 críticos, ~35 medios, ~45 menores (tras dedup). No se modificó nada.
+**Scope:** the 4 repos (backend, frontend, desktop, motion-lab) + launcher + configs (~9.6k lines).
+**Method:** 10 automated auditors in parallel (duplication, Node/React practices, over-engineering,
+Python, security, consistency, tests) → 101 findings → dedup → **manual verification of the
+critical ones against the real code**.
+**Result:** 6 critical, ~35 medium, ~45 minor (after dedup). Nothing was modified.
 
-> **Contexto de severidad.** Hannah es self-hosted, un usuario, en localhost. Varios "críticos" de
-> seguridad **solo muerden si el backend queda expuesto en red o cuando el repo se haga público** —
-> pero justo eso está en tus planes, y el backend **hoy escucha en `0.0.0.0`** (toda la LAN). Así que
-> son la prioridad #1 antes de compartir. El resto (duplicación, código muerto, perf) es deuda técnica
-> normal de un proyecto que creció rápido.
+> **Severity context.** Hannah is self-hosted, single user, on localhost. Several security
+> "criticals" **only bite if the backend ends up exposed on the network or once the repo goes public** —
+> but that is exactly what you have planned, and the backend **listens on `0.0.0.0` today** (the whole LAN). So
+> they are priority #1 before sharing. The rest (duplication, dead code, perf) is the normal technical debt
+> of a project that grew fast.
 
 ---
 
-## Resumen ejecutivo
+## Executive summary
 
-**Salud general: buena y pragmática, con deuda concentrada en 4 focos.** El código funciona, las capas
-deterministas + tags + skills conviven a propósito (bien). La deuda real:
+**Overall health: good and pragmatic, with debt concentrated in 4 hotspots.** The code works, the
+deterministic layers + tags + skills coexist on purpose (good). The real debt:
 
-1. **Exposición de red** — `express.static('.')` regala `data/settings.json` (API keys) y `data/memory.db`
-   (todo tu historial), el pty de terminal corre shell sin gate ni auth, y todo escucha en `0.0.0.0`.
-2. **Código muerto de los pivots** — el toggle anime/smplx quedó a medio quitar y arrastra un **preload
-   de 19 MB en cada arranque**, más `toolSchemas`/`cmdAllowlist`/`trustModel`/`recall_memory`/restos de Tauri.
-3. **Duplicación** — 4 módulos de estado con el mismo `load/persist`, la lista de tags de acción en 2
-   regex a mano, el parseo de movimiento copiado entre backend y Electron, 10 `catch` idénticos en la API.
-4. **Base sin red de seguridad** — 0 ESLint, y la capa regex-heavy (parsers de intents, DANGER) **sin un
-   solo test**; peor: el test actual **corrompe tu memoria real** al correr.
+1. **Network exposure** — `express.static('.')` gives away `data/settings.json` (API keys) and `data/memory.db`
+   (your whole history), the terminal pty runs a shell with no gate and no auth, and everything listens on `0.0.0.0`.
+2. **Dead code from the pivots** — the anime/smplx toggle was left half-removed and drags along a **19 MB preload
+   on every start**, plus `toolSchemas`/`cmdAllowlist`/`trustModel`/`recall_memory`/Tauri leftovers.
+3. **Duplication** — 4 state modules with the same `load/persist`, the action-tag list in 2
+   hand-written regexes, move parsing copied between backend and Electron, 10 identical `catch`es in the API.
+4. **A codebase with no safety net** — 0 ESLint, and the regex-heavy layer (intent parsers, DANGER) **without a
+   single test**; worse: the current test **corrupts your real memory** when it runs.
 
-### Top 6 acciones (máximo impacto / mínimo esfuerzo)
+### Top 6 actions (maximum impact / minimum effort)
 
-| # | Acción | Tapa | Esfuerzo |
+| # | Action | Covers | Effort |
 |---|--------|------|----------|
-| 1 | `express.static('public')` en vez de `'.'` + `app.listen(port, '127.0.0.1')` | 2 críticos (keys+memoria en LAN) | S |
-| 2 | `open_url`: `execFile('xdg-open',[u])` + validar `new URL(u)` | 1 crítico (RCE por inyección) | S |
-| 3 | Gatear `TERMINAL_START/IN` con `systemControl` (+ el bind del punto 1) | 1 crítico (shell sin auth) | S |
-| 4 | Quitar el `logger.info("ASR result: …")` del sidecar ASR | 1 crítico (privacidad) | S |
-| 5 | Borrar código muerto (avatares smplx/rpm + preload 19MB, toolSchemas/names, cmdAllowlist, trustModel, recall_memory, Tauri) | ~500 líneas + 19MB | M |
-| 6 | `lib/api.js` con `API_BASE` para los 10 fetch del frontend | panels rotos en Electron + dedup | S |
+| 1 | `express.static('public')` instead of `'.'` + `app.listen(port, '127.0.0.1')` | 2 criticals (keys+memory on the LAN) | S |
+| 2 | `open_url`: `execFile('xdg-open',[u])` + validate with `new URL(u)` | 1 critical (RCE via injection) | S |
+| 3 | Gate `TERMINAL_START/IN` with `systemControl` (+ the bind from point 1) | 1 critical (shell with no auth) | S |
+| 4 | Remove the `logger.info("ASR result: …")` from the ASR sidecar | 1 critical (privacy) | S |
+| 5 | Delete dead code (smplx/rpm avatars + 19MB preload, toolSchemas/names, cmdAllowlist, trustModel, recall_memory, Tauri) | ~500 lines + 19MB | M |
+| 6 | `lib/api.js` with `API_BASE` for the frontend's 10 fetches | panels broken in Electron + dedup | S |
 
 ---
 
-## 🔴 Críticos (verificados contra el código)
+## 🔴 Critical (verified against the code)
 
-### C1 · `express.static('.')` expone API keys e historial por la red
+### C1 · `express.static('.')` exposes API keys and history over the network
 `hannah-backend/src/server.js:48` + `:68`
 ```js
-app.use(express.static('.'));          // sirve TODO el root del backend
-const httpServer = app.listen(config.port, () => { … });  // sin host -> 0.0.0.0
+app.use(express.static('.'));          // serves the WHOLE backend root
+const httpServer = app.listen(config.port, () => { … });  // no host -> 0.0.0.0
 ```
-**Por qué importa:** `GET /data/settings.json` devuelve la config con `apiKey` en **texto plano**
-(`snapshot()` en `state/settings.js:66` escribe el secreto sin redactar) y `GET /data/memory.db`
-descarga **5.5 MB de todas tus conversaciones**. El endpoint `/settings` se cuida de redactar la key…
-pero el static la regala igual. Y como escucha en `0.0.0.0`, cualquier equipo de la LAN la lee (curl no
-pasa por CORS). Hoy tu `llm.apiKey` es `"ollama"` (inofensivo), pero apenas uses una key de Groq/OpenAI
-queda expuesta — y la memoria ya lo está.
-**Fix (S):** servir solo lo público → `app.get('/test-client.html', (req,res)=>res.sendFile(…))` o
-`express.static('public')`; y `app.listen(config.port, '127.0.0.1')` (host configurable).
+**Why it matters:** `GET /data/settings.json` returns the config with `apiKey` in **plain text**
+(`snapshot()` in `state/settings.js:66` writes the secret unredacted) and `GET /data/memory.db`
+downloads **5.5 MB of every conversation you have had**. The `/settings` endpoint is careful to redact the key…
+but the static handler gives it away anyway. And since it listens on `0.0.0.0`, any machine on the LAN can read it (curl does
+not go through CORS). Today your `llm.apiKey` is `"ollama"` (harmless), but the moment you use a Groq/OpenAI key
+it is exposed — and the memory already is.
+**Fix (S):** serve only what is public → `app.get('/test-client.html', (req,res)=>res.sendFile(…))` or
+`express.static('public')`; and `app.listen(config.port, '127.0.0.1')` (host configurable).
 
-### C2 · Inyección de comandos en `open_url` (RCE sin ningún flag)
+### C2 · Command injection in `open_url` (RCE with no flag at all)
 `hannah-backend/src/pipeline/tools.js:94`
 ```js
-exec(`${opener} "${u}"`, …);   // la URL va cruda al shell, entre comillas
+exec(`${opener} "${u}"`, …);   // the URL goes raw into the shell, inside quotes
 ```
-**Por qué importa:** `u` solo se valida con `/^https?:\/\//` y se interpola en un `exec()` (usa `/bin/sh`).
-Una URL con comilla escapa: `https://x";touch /tmp/pwned;"`. `open_url` **no** está detrás de
-`systemControl` ni de `DANGER`: se dispara con el tag `[BROWSE:]` del modelo y desde `handleOpenIntent`.
-Cadena real: web maliciosa leída con `fetch_url`/`web_search` → inyección de prompt → el modelo emite
-`[BROWSE: <payload>]` → ejecución de código. Es la vía más grave porque no requiere activar nada.
-**Fix (S):** `execFile('xdg-open', [u])` (sin shell) + `new URL(u)` rechazando esquemas ≠ http/https.
+**Why it matters:** `u` is only validated with `/^https?:\/\//` and is interpolated into an `exec()` (which uses `/bin/sh`).
+A URL with a quote escapes: `https://x";touch /tmp/pwned;"`. `open_url` is **not** behind
+`systemControl` nor behind `DANGER`: it fires from the model's `[BROWSE:]` tag and from `handleOpenIntent`.
+Real chain: malicious page read with `fetch_url`/`web_search` → prompt injection → the model emits
+`[BROWSE: <payload>]` → code execution. It is the worst path of all, because nothing has to be turned on for it to work.
+**Fix (S):** `execFile('xdg-open', [u])` (no shell) + `new URL(u)` rejecting schemes ≠ http/https.
 
-### C3 · Terminal (pty) = shell sin autenticación ni gate `systemControl`
+### C3 · Terminal (pty) = shell with no authentication and no `systemControl` gate
 `hannah-backend/src/gateway/websocket.js:112` → `terminal.js:39`
 ```js
 case 'TERMINAL_IN': terminalInput(sessionId, data.data || ''); break;
 // terminal.js: input(sessionId,data){ sessions.get(sessionId)?.pty.write(data); }
 ```
-**Por qué importa:** `TERMINAL_START` crea un pty de login (`$SHELL -l`) **sin mirar `systemControl`**
-(ese flag solo protege `run_command` y skills `terminal`). Con `POST /session` sin auth + bind `0.0.0.0`,
-cualquier dispositivo de la LAN abre el WS y **tipea comandos arbitrarios en tu shell** — el `DANGER`/
-confirmación tampoco aplica a esta vía. "system control off" NO garantiza que no se corra shell.
-**Fix (S):** gatear `TERMINAL_START/IN/RESIZE` con `systemControl` **y** bindear a `127.0.0.1` (C1). Documentar
-que el canal terminal equivale a acceso shell.
+**Why it matters:** `TERMINAL_START` creates a login pty (`$SHELL -l`) **without ever looking at `systemControl`**
+(that flag only protects `run_command` and `terminal` skills). With `POST /session` unauthenticated + the `0.0.0.0` bind,
+any device on the LAN can open the WS and **type arbitrary commands into your shell** — the `DANGER`/
+confirmation does not apply to this path either. "system control off" does NOT guarantee that no shell runs.
+**Fix (S):** gate `TERMINAL_START/IN/RESIZE` with `systemControl` **and** bind to `127.0.0.1` (C1). Document
+that the terminal channel is equivalent to shell access.
 
-### C4 · El sidecar ASR loguea el transcript del usuario (viola regla de privacidad)
+### C4 · The ASR sidecar logs the user's transcript (violates the privacy rule)
 `hannah-backend/sidecar/asr/main.py:75`
 ```py
 logger.info(f"ASR result: {transcript[:80]}")
 ```
-**Por qué importa:** el CLAUDE.md es explícito — *"Never log user content (transcripts, LLM responses)"*.
-Cada frase que decís queda escrita en el log (journald/stdout persistente). Es el único sidecar que rompe
-la garantía. (Además hay una violación gemela en `websocket.js:85`, que loguea el payload crudo del cliente.)
+**Why it matters:** CLAUDE.md is explicit — *"Never log user content (transcripts, LLM responses)"*.
+Every sentence you say ends up written into the log (journald/persistent stdout). It is the only sidecar that breaks
+the guarantee. (There is also a twin violation in `websocket.js:85`, which logs the client's raw payload.)
 **Fix (S):** `logger.info(f"ASR done: {len(transcript)} chars, lang={info.language}")`.
 
-### C5 · Los paneles de Ajustes/Atajos/Skills usan `fetch` relativo → rotos en la app Electron
-`hannah-frontend/src/components/SettingsPanel.jsx` (10 llamadas: 100, 150, 170, 237, 242, 248, 260, 269, 342, 377)
+### C5 · The Settings/Shortcuts/Skills panels use relative `fetch` → broken in the Electron app
+`hannah-frontend/src/components/SettingsPanel.jsx` (10 calls: 100, 150, 170, 237, 242, 248, 260, 269, 342, 377)
 ```js
 fetch('/api/v1/settings')   // vs useWebSocket.js: API_BASE = DESKTOP ? DESKTOP.backendBase : ''
 ```
-**Por qué importa:** en el Electron empaquetado la página se sirve desde el mini-servidor estático de
-`main.js` (puerto aleatorio, sin proxy). Un `fetch('/api/v1/…')` resuelve contra ese origen y da 404 →
-cada sección cae en "backend no disponible". **Ajustes, Atajos, Skills y el selector de voces no funcionan
-en la app de escritorio** (solo en el navegador vía proxy Vite). Causa raíz: el patrón fetch está copiado
-10 veces sin helper, así que el `API_BASE` que sí se puso en `useWebSocket.js` nunca se propagó.
-**Fix (S):** `src/lib/api.js` con `API_BASE` + `apiGet/apiPost/apiDelete`; reemplazar las 10 llamadas.
+**Why it matters:** in packaged Electron the page is served from the mini static server in
+`main.js` (random port, no proxy). A `fetch('/api/v1/…')` resolves against that origin and gives 404 →
+every section falls into "backend no disponible". **Settings, Shortcuts, Skills and the voice picker do not work
+in the desktop app** (only in the browser via the Vite proxy). Root cause: the fetch pattern is copied
+10 times with no helper, so the `API_BASE` that *was* added in `useWebSocket.js` never propagated.
+**Fix (S):** `src/lib/api.js` with `API_BASE` + `apiGet/apiPost/apiDelete`; replace the 10 calls.
 
-### C6 · `npm test` escribe en tu memoria REAL y puede llamar a Ollama en vivo
+### C6 · `npm test` writes into your REAL memory and can call Ollama live
 `hannah-backend/tests/unit/conversationManager.test.js:26`
-**Por qué importa:** `addTurn` persiste en SQLite real (`memoryStore` abre `data/memory.db` con ruta
-hardcodeada, sin override para tests). Cada `npm test` inserta filas "turno N" en tu memoria de largo
-plazo; con `MEMORY_RECALL` on por defecto dispara embeddings a Ollama, y al superar el umbral de resumen
-**reescribe tu resumen persistente** plegando basura de test. El test pasa, pero **corrompe datos reales**.
-**Fix (S):** ruta de DB inyectable (`MEMORY_DB_PATH=':memory:'` en tests) + `MEMORY_RECALL=false` en el setup.
+**Why it matters:** `addTurn` persists to the real SQLite (`memoryStore` opens `data/memory.db` with a
+hardcoded path, no override for tests). Every `npm test` inserts "turno N" rows into your long-term
+memory; with `MEMORY_RECALL` on by default it fires embeddings at Ollama, and once the summary threshold is crossed
+it **rewrites your persistent summary**, folding in test garbage. The test passes, but it **corrupts real data**.
+**Fix (S):** injectable DB path (`MEMORY_DB_PATH=':memory:'` in tests) + `MEMORY_RECALL=false` in the setup.
 
 ---
 
-## 🟡 Medios (agrupados por tema)
+## 🟡 Medium (grouped by theme)
 
-### Seguridad / robustez
-- **DANGER es una blocklist evadible** (`tools.js:17`). Es el único gate entre el LLM y comandos destructivos
-  con `systemControl=true`, y se salta trivial: `\brm\s+\S` no matchea `ls | xargs rm` ni `find . -delete`,
-  `shred`, `truncate -s0`, `> archivo`, `: > f`, ni `base64|sh`/`eval`. **Fix (M):** o confirmación para TODO
-  `run_command`, o dejar explícito que DANGER es best-effort (no una barrera).
-- **`{arg}` de skills se interpola crudo al shell** (`skills.js:139`) → inyección con `;`/`$()`/pipes. Gated
-  por `systemControl`, pero al activarlo + inyección = RCE. **Fix (M):** `execFile`/shell-quote, o tratar
-  `run` con `{arg}` siempre como destructivo (confirmar).
-- **SSRF en `fetch_url`/`web_search`** (`tools.js:72`): alcanzan `127.0.0.1:11434` (Ollama), `:8005` (motion),
-  la LAN y metadata cloud (169.254.169.254). Una web leída antes puede hacer que Hannah lea sus endpoints
-  internos. **Fix (M):** rechazar loopback/privadas/link-local antes del fetch.
-- **WS sin `maxPayload` ni validación de tipo** (`websocket.js:14`): el cap de 5MB solo cubre binario; `data.frame`
-  y `data.text` no se validan. **Fix (S).**
-- **Electron `webSecurity:false` + `no-sandbox`** (`main.js:48`): riesgo aceptado, pero **documentarlo**.
+### Security / robustness
+- **DANGER is an evadable blocklist** (`tools.js:17`). It is the only gate between the LLM and destructive commands
+  with `systemControl=true`, and it is bypassed trivially: `\brm\s+\S` does not match `ls | xargs rm` nor `find . -delete`,
+  `shred`, `truncate -s0`, `> archivo`, `: > f`, nor `base64|sh`/`eval`. **Fix (M):** either confirmation for EVERY
+  `run_command`, or make it explicit that DANGER is best-effort (not a barrier).
+- **Skills' `{arg}` is interpolated raw into the shell** (`skills.js:139`) → injection with `;`/`$()`/pipes. Gated
+  by `systemControl`, but turning that on + injection = RCE. **Fix (M):** `execFile`/shell-quote, or always treat
+  `run` with `{arg}` as destructive (confirm).
+- **SSRF in `fetch_url`/`web_search`** (`tools.js:72`): they reach `127.0.0.1:11434` (Ollama), `:8005` (motion),
+  the LAN and cloud metadata (169.254.169.254). A web page read earlier can make Hannah read her own internal
+  endpoints. **Fix (M):** reject loopback/private/link-local before the fetch.
+- **WS with no `maxPayload` and no type validation** (`websocket.js:14`): the 5MB cap only covers binary; `data.frame`
+  and `data.text` are not validated. **Fix (S).**
+- **Electron `webSecurity:false` + `no-sandbox`** (`main.js:48`): accepted risk, but **document it**.
 
-### Duplicación (consolidar)
-- **Capa determinista copiada** entre `processVoiceTurn` y `processUserTextTurn` (`orchestrator.js:161` vs 231):
-  ~14 líneas casi idénticas + el string mágico *"(Responde al usuario con este resultado real…)"* dos veces.
-  **Fix (S):** helper `runDeterministicLayer(text, …)`.
-- **Lista de tags de acción en 2 regex a mano** (`llm.js:113` `ACTION_RE` vs `orchestrator.js:74` strip): si
-  agregás un tag y olvidás el strip, **el TTS lo lee en voz alta**. **Fix (S):** derivar ambos de `Object.keys(ACTION_TOOL)`.
-- **Gate DANGER→confirm duplicado** entre `run_command` (`tools.js:162`) y skills `terminal` (`skills.js:159`).
-  Es seguridad: si divergen, una vía confirma distinto. **Fix (S):** `confirmIfDangerous(cmd, ctx)`.
-- **Persistencia JSON duplicada** entre `settings.js` y `shortcuts.js` (`persist/load` idénticos) + `DATA_DIR`
-  calculado en 4 módulos. **Fix (S):** `state/dataDir.js` + `jsonFile(name)`.
-- **10 `catch → res.status(500)` idénticos** en `api/*.js` pese a haber un error-middleware global en
-  `server.js:54` que hace lo mismo (nunca se alcanza). **Fix (S):** wrapper `handler(slug, fn)`.
-- **Recall vectorial duplicado** entre `recallContext` (`llm.js:21`) y la tool `recall_memory` (`tools.js:32`),
-  **con umbrales divergentes** (0.55 vs 0.5, K config vs 3). **Fix (S):** `recallTopK()` en `embeddings.js`.
-- **backend `windowControl.js` ↔ `hannah-desktop/main.js`**: parseo de specs de movimiento y gaze (K=1.4,
-  eyeY=0.32, COMPACT 400×620) copiados y **ya divergidos**. **Fix (M):** el backend manda el spec resuelto.
-- **Avatares:** `VrmAvatar` y `SmplxAvatar` copian el cálculo de frame y el decode axis-angle→quaternion
+### Duplication (consolidate)
+- **Deterministic layer copied** between `processVoiceTurn` and `processUserTextTurn` (`orchestrator.js:161` vs 231):
+  ~14 nearly identical lines + the magic string *"(Responde al usuario con este resultado real…)"* twice.
+  **Fix (S):** a `runDeterministicLayer(text, …)` helper.
+- **Action-tag list in 2 hand-written regexes** (`llm.js:113` `ACTION_RE` vs `orchestrator.js:74` strip): if
+  you add a tag and forget the strip, **the TTS reads it out loud**. **Fix (S):** derive both from `Object.keys(ACTION_TOOL)`.
+- **DANGER→confirm gate duplicated** between `run_command` (`tools.js:162`) and `terminal` skills (`skills.js:159`).
+  This is security: if they diverge, one path confirms differently. **Fix (S):** `confirmIfDangerous(cmd, ctx)`.
+- **JSON persistence duplicated** between `settings.js` and `shortcuts.js` (identical `persist/load`) + `DATA_DIR`
+  computed in 4 modules. **Fix (S):** `state/dataDir.js` + `jsonFile(name)`.
+- **10 identical `catch → res.status(500)`** in `api/*.js` even though there is a global error middleware in
+  `server.js:54` doing the same thing (it is never reached). **Fix (S):** a `handler(slug, fn)` wrapper.
+- **Vector recall duplicated** between `recallContext` (`llm.js:21`) and the `recall_memory` tool (`tools.js:32`),
+  **with diverging thresholds** (0.55 vs 0.5, configured K vs 3). **Fix (S):** `recallTopK()` in `embeddings.js`.
+- **backend `windowControl.js` ↔ `hannah-desktop/main.js`**: parsing of move specs and gaze (K=1.4,
+  eyeY=0.32, COMPACT 400×620) copied and **already diverged**. **Fix (M):** the backend sends the resolved spec.
+- **Avatars:** `VrmAvatar` and `SmplxAvatar` copy the frame computation and the axis-angle→quaternion decode
   (`VrmAvatar.jsx:242` vs `SmplxAvatar.jsx:66`). **Fix (S):** `lib/motionUtils.js`.
-- **Cliente OpenAI memoizado** repetido en `llm.js:33` y `vlm.js:8` (vlm no invalida por apiKey). **Fix (S).**
-- **`preload_cuda_libs()` copiada** char-a-char entre `asr/main.py` y `tts/main.py`. **Fix (S):** `sidecar/common.py`.
-- Menores del mismo tipo: `sh` en hyprland/x11, envelope de motion (lab/emage), strip HTML en fetch_url/web_search,
-  `ensureHttps` en 2 tools, base64→bytes en useWebSocket, `CLOSE_ALIAS`, botones del HUD que ignoran `IconBtn`.
+- **Memoized OpenAI client** repeated in `llm.js:33` and `vlm.js:8` (vlm does not invalidate on apiKey). **Fix (S).**
+- **`preload_cuda_libs()` copied** char-for-char between `asr/main.py` and `tts/main.py`. **Fix (S):** `sidecar/common.py`.
+- Minor ones of the same kind: `sh` in hyprland/x11, motion envelope (lab/emage), HTML strip in fetch_url/web_search,
+  `ensureHttps` in 2 tools, base64→bytes in useWebSocket, `CLOSE_ALIAS`, HUD buttons that ignore `IconBtn`.
 
-### Código muerto / sobreingeniería
-- **`avatarMode` es estado zombie:** `setAvatarMode` no tiene ningún llamador; vale `'vrm'` para siempre. Deja
-  muertos `Avatar.jsx` (113 líneas), `SmplxAvatar.jsx` (124) y **un `useGLTF.preload('/smplx_avatar.glb')` de
-  19 MB que se baja en CADA arranque del overlay** (`SmplxAvatar.jsx:123`). **Fix (M):** borrar ambos + el
-  preload + `VISEME_MAP` + `avatarMode` del store.
-- **`toolSchemas()` es código muerto** del function-calling viejo (`tools.js:323`): `llm.js` la importa pero
-  nunca la llama → **`config.tools.names` y la env `TOOLS` no filtran nada** (todas las tools son alcanzables
-  por tags). **Fix (S):** borrar.
-- **`cmdAllowlist`** (`config.js:146`) no tiene consumidor y su comentario *"con allowlist"* **es falso** — con
-  `systemControl=true` corre cualquier comando. Config que desinforma sobre el riesgo real. **Fix (S):** borrar.
-- **`skills.trustModel`** (`config.js:157`): editable y persistido desde el panel ⚙, pero **ningún código lo
-  lee** (la capa determinista corre incondicional). UI que le miente al usuario. **Fix (S):** borrar o implementar.
-- **`recall_memory` / `[RECALL:]`**: la tool existe pero ningún prompt la enseña y el propio config dice que se
-  omite. Duplica `recallContext`. **Fix (S):** borrar la tool y `RECALL` de las regex.
-- **Restos de Tauri:** `const isTauri` en `App.jsx:11` (muerto) + `@tauri-apps/api`/`cli` en devDeps sin
-  `src-tauri/`. **Fix (S):** borrar.
-- **`motion` config a medio migrar** (`config.js:118`): un solo `sidecarUrl` para dos providers incompatibles;
-  el `.env.example` fija `:8004` (EMAGE) con el default provider `lab` (:8005) → **el co-speech falla en
-  silencio** con el setup documentado. **Fix (S):** URLs separadas por provider.
-- Menores: `getReference()` sin consumidor, `motion.js` `action`/`intensity` que nadie pasa, `pushFrame` pass-through
-  de `frameStore`, doble wrapper `analyzeScene/analyzeFrame`, estado muerto en el store (`lastDetection`, `sessionId`).
+### Dead code / over-engineering
+- **`avatarMode` is zombie state:** `setAvatarMode` has no caller at all; it is `'vrm'` forever. It leaves
+  `Avatar.jsx` (113 lines), `SmplxAvatar.jsx` (124) dead and **a 19 MB `useGLTF.preload('/smplx_avatar.glb')`
+  that is downloaded on EVERY overlay start** (`SmplxAvatar.jsx:123`). **Fix (M):** delete both + the
+  preload + `VISEME_MAP` + `avatarMode` from the store.
+- **`toolSchemas()` is dead code** from the old function-calling (`tools.js:323`): `llm.js` imports it but
+  never calls it → **`config.tools.names` and the `TOOLS` env filter nothing** (every tool is reachable
+  through tags). **Fix (S):** delete.
+- **`cmdAllowlist`** (`config.js:146`) has no consumer and its comment *"con allowlist"* **is false** — with
+  `systemControl=true` any command runs. Config that misinforms about the real risk. **Fix (S):** delete.
+- **`skills.trustModel`** (`config.js:157`): editable and persisted from the ⚙ panel, but **no code
+  reads it** (the deterministic layer runs unconditionally). UI that lies to the user. **Fix (S):** delete or implement.
+- **`recall_memory` / `[RECALL:]`**: the tool exists but no prompt teaches it and the config itself says it is
+  omitted. It duplicates `recallContext`. **Fix (S):** delete the tool and `RECALL` from the regexes.
+- **Tauri leftovers:** `const isTauri` in `App.jsx:11` (dead) + `@tauri-apps/api`/`cli` in devDeps with no
+  `src-tauri/`. **Fix (S):** delete.
+- **`motion` config half-migrated** (`config.js:118`): a single `sidecarUrl` for two incompatible providers;
+  `.env.example` pins `:8004` (EMAGE) while the default provider is `lab` (:8005) → **co-speech gestures fail
+  silently** with the documented setup. **Fix (S):** separate URLs per provider.
+- Minor: `getReference()` with no consumer, `motion.js` `action`/`intensity` that nobody passes, `pushFrame` pass-through
+  of `frameStore`, double `analyzeScene/analyzeFrame` wrapper, dead state in the store (`lastDetection`, `sessionId`).
 
 ### React / performance
-- **`HUD.jsx:76` y `App.jsx:48` se suscriben al store SIN selector.** Zustand notifica cualquier cambio, y
-  durante el habla `setVisemes` dispara varias veces/seg + `overlayGaze` a ~12 Hz + `addLog` por evento →
-  **HUD y todo el árbol (Scene/Canvas incluido) re-renderizan 20+ veces/seg**. **Fix (S):** selectores atómicos
-  (`useHannahStore(s => s.emotion)`). Es el fix de perf de mayor impacto. (Además `HUD` destructura `logs` que no usa.)
-- **Race en `connect()`** (`useWebSocket.js:259`): tras el `await` del fetch no chequea `unmountedRef` → con
-  StrictMode crea un WebSocket huérfano que queda abierto para siempre y puede reconectar solo. **Fix (S).**
-- **Timer de reset de visema (120ms) no se registra** en `visemeSchedule` (`useWebSocket.js:64`): sobrevive al
-  barge-in (pisa el primer visema de la frase siguiente) y el array de ids nunca se vacía. **Fix (S).**
-- **`useWebSocket.js` (332 líneas) mezcla 5 responsabilidades** no-React (transporte, motor de audio, scheduler
-  de visemas, decode de motion, router). **Fix (M):** extraer `lib/audioPlayer.js` + `lib/wsClient.js`.
-- Menores: `useVision` no limpia interval/cámara al desmontar (crea un canvas 640×480 cada 2s); `onGaze` IPC
-  sin cleanup (doble registro en StrictMode); `Avatar.jsx` reconstruye Sets en cada frame; `GAZE_ON` se envía dos veces.
+- **`HUD.jsx:76` and `App.jsx:48` subscribe to the store WITHOUT a selector.** Zustand notifies on any change, and
+  during speech `setVisemes` fires several times/sec + `overlayGaze` at ~12 Hz + `addLog` per event →
+  **the HUD and the whole tree (Scene/Canvas included) re-render 20+ times/sec**. **Fix (S):** atomic selectors
+  (`useHannahStore(s => s.emotion)`). It is the highest-impact perf fix. (Also, `HUD` destructures `logs` it does not use.)
+- **Race in `connect()`** (`useWebSocket.js:259`): after the fetch's `await` it does not check `unmountedRef` → under
+  StrictMode it creates an orphan WebSocket that stays open forever and can reconnect on its own. **Fix (S).**
+- **The viseme reset timer (120ms) is not registered** in `visemeSchedule` (`useWebSocket.js:64`): it survives
+  barge-in (stomping the first viseme of the next sentence) and the id array is never emptied. **Fix (S).**
+- **`useWebSocket.js` (332 lines) mixes 5 non-React responsibilities** (transport, audio engine, viseme
+  scheduler, motion decode, router). **Fix (M):** extract `lib/audioPlayer.js` + `lib/wsClient.js`.
+- Minor: `useVision` does not clean up the interval/camera on unmount (it creates a 640×480 canvas every 2s); `onGaze` IPC
+  with no cleanup (double registration under StrictMode); `Avatar.jsx` rebuilds Sets on every frame; `GAZE_ON` is sent twice.
 
-### Correctness (bugs sutiles)
-- **`handleOpenIntent`/`handleCloseIntent` (async) se llaman sin `await` ni `.catch`** (`orchestrator.js:165`,
-  235). Un throw = `unhandledRejection` → **tumba el proceso** (viola "nunca crashear"). Igual `moveWindow()`
-  en 66/164/234. Y el boolean que devuelven se ignora → el modelo puede re-abrir la app vía `[OPEN:]`. **Fix (S).**
-- **Con tools activas se pierde el pipelining por oración** (`llm.js:129`): la respuesta entra entera como UN
-  segmento → una sola llamada TTS gigante, time-to-first-audio = generación completa. Rompe el objetivo <500ms
-  y "stream en cada etapa" en cada turno. **Fix (S):** partir por oración también en el camino sin acciones.
-- **`recentUserMove` Map crece sin límite** por sessionId (`orchestrator.js:49`); igual `_session_prefix` en
-  `motion-lab/serve/main.py:39` (retiene tensores CUDA por sesión para siempre). **Fix (S):** TTL/LRU.
-- **`/text` sin handler de `error` en el audioStream** (`router.js:53`): si el stream falla la request queda
-  colgada para siempre. **Fix (S).**
+### Correctness (subtle bugs)
+- **`handleOpenIntent`/`handleCloseIntent` (async) are called with no `await` and no `.catch`** (`orchestrator.js:165`,
+  235). A throw = `unhandledRejection` → **it takes the process down** (violates "never crash"). Same for `moveWindow()`
+  at 66/164/234. And the boolean they return is ignored → the model can re-open the app via `[OPEN:]`. **Fix (S).**
+- **With tools active, per-sentence pipelining is lost** (`llm.js:129`): the response comes in whole as ONE
+  segment → a single giant TTS call, time-to-first-audio = the full generation. It breaks the <500ms target
+  and "stream at every stage" on every turn. **Fix (S):** split by sentence in the no-actions path too.
+- **The `recentUserMove` Map grows without bound** per sessionId (`orchestrator.js:49`); same for `_session_prefix` in
+  `motion-lab/serve/main.py:39` (it holds CUDA tensors per session forever). **Fix (S):** TTL/LRU.
+- **`/text` with no `error` handler on the audioStream** (`router.js:53`): if the stream fails the request hangs
+  forever. **Fix (S).**
 
 ### Python (sidecars + motion-lab)
-- **Endpoints `async def` con inferencia síncrona** bloquean el event loop en los 4 sidecars (`/health` no
-  responde durante cada inferencia; requests concurrentes se serializan). **Fix (S):** declararlos `def` (FastAPI
-  los manda al threadpool) o `run_in_executor`.
-- **Vision no valida la entrada** (`vision/main.py:21`): base64/imagen corruptos → 500 crudo en vez de 400 (los
-  otros sidecars sí devuelven 400). **Fix (S).** Además: sin `/health`, `print()` en vez de logging, uploads sin
-  límite de tamaño.
-- **`train_vae.py`/`train_flow.py` duplican ~60 líneas** de andamiaje ya divergido (umbral NaN 1e3 vs 1e4). **Fix (M).**
-- Menores: T5 y modelos que se cargan en el primer request (no en startup); `requirements.txt` con pins mixtos
-  (`ultralytics`/`pillow` sin pin); resume de checkpoint que no restaura el optimizador.
+- **`async def` endpoints with synchronous inference** block the event loop in all 4 sidecars (`/health` does not
+  respond during each inference; concurrent requests get serialized). **Fix (S):** declare them `def` (FastAPI
+  hands them to the threadpool) or `run_in_executor`.
+- **Vision does not validate its input** (`vision/main.py:21`): corrupt base64/image → raw 500 instead of 400 (the
+  other sidecars do return 400). **Fix (S).** Also: no `/health`, `print()` instead of logging, uploads with no
+  size limit.
+- **`train_vae.py`/`train_flow.py` duplicate ~60 lines** of scaffolding that has already diverged (NaN threshold 1e3 vs 1e4). **Fix (M).**
+- Minor: T5 and models loaded on the first request (not at startup); `requirements.txt` with mixed pins
+  (`ultralytics`/`pillow` unpinned); checkpoint resume that does not restore the optimizer.
 
-### Config / contratos / docs
-- **`process.env` fuera de `config.js`** en `terminal.js:15` (SHELL/COMSPEC), `hyprland.js:16`, `x11.js:10`
-  (viola la regla). **Fix (S).**
-- **Docs desactualizadas:** README/CLAUDE.md/.env.example dicen cosas que ya no son ciertas (Hannah "habla
-  español" vs protocol en inglés; sección motion como "EMAGE :8004"; tools "OFF por defecto" vs `.env` con
-  `TOOLS_ENABLED=true`). *(El auditor de consistencia cayó por el límite de sesión — esto es de otros auditores;
-  conviene una pasada dedicada.)*
+### Config / contracts / docs
+- **`process.env` outside `config.js`** in `terminal.js:15` (SHELL/COMSPEC), `hyprland.js:16`, `x11.js:10`
+  (violates the rule). **Fix (S).**
+- **Stale docs:** README/CLAUDE.md/.env.example say things that are no longer true (Hannah "speaks
+  Spanish" vs the protocol in English; the motion section as "EMAGE :8004"; tools "OFF by default" vs an `.env` with
+  `TOOLS_ENABLED=true`). *(The consistency auditor was cut off by the session limit — this comes from the other auditors;
+  a dedicated pass is advisable.)*
 
 ### Tests / tooling
-- **0 ESLint** en los 3 repos JS (sin config, sin script, sin devDep). Atraparía gratis los `no-unused-vars`,
-  `react-hooks/exhaustive-deps` y fire-and-forget de arriba. **Fix (S).**
-- **La capa regex-heavy no tiene un solo test:** `parseMoveIntent`, `resolveDataAction`/`handleOpen`/`handleClose`,
-  `parseFrontmatter`/`sshArg`/`resolveSkillPhrase`, el strip de tags del orchestrator, y **el guard `DANGER`**
-  (lo único que decide si se pide confirmación antes de un `rm`). Son funciones puras: el test más barato y de
-  más valor del repo. **Fix (S–M):** suites table-driven `string → esperado`.
-- **`llm.test.js`** parte de una premisa obsoleta (el cliente OpenAI ya no se instancia al importar). Revisar.
-- **Deps declaradas sin usar:** `@anthropic-ai/sdk`, `supertest`, `@tauri-apps/*`. **Fix (S).**
+- **0 ESLint** in the 3 JS repos (no config, no script, no devDep). It would catch the `no-unused-vars`,
+  `react-hooks/exhaustive-deps` and fire-and-forget items above for free. **Fix (S).**
+- **The regex-heavy layer does not have a single test:** `parseMoveIntent`, `resolveDataAction`/`handleOpen`/`handleClose`,
+  `parseFrontmatter`/`sshArg`/`resolveSkillPhrase`, the orchestrator's tag strip, and **the `DANGER` guard**
+  (the one thing that decides whether confirmation is asked before an `rm`). They are pure functions: the cheapest and
+  highest-value test in the repo. **Fix (S–M):** table-driven `string → expected` suites.
+- **`llm.test.js`** starts from an obsolete premise (the OpenAI client is no longer instantiated on import). Review.
+- **Declared but unused deps:** `@anthropic-ai/sdk`, `supertest`, `@tauri-apps/*`. **Fix (S).**
 
 ---
 
-## ⚪ Menores (45) — resumen
-Casi todos son **duplicación chica** (helpers copiados: `sh`, base64→bytes, `ensureHttps`, `stripHtml`, envelope
-de motion, formato `[Salida real de…]`), **magic numbers repetidos** (el suelo `-1.6` en 4 archivos; paleta/tipografía
-inline sin módulo de tokens), **pass-throughs muertos** (`visionLoop` re-exporta `frameStore`), y **pulido de
-robustez** (`get_weather` sin timeout, `console.error` en vez de logger, el launcher con pasos frágiles). Ninguno
-urgente; se barren de a poco o junto con el refactor del tema que los contiene. Lista completa en el journal del
-workflow.
+## ⚪ Minor (45) — summary
+Almost all of them are **small duplication** (copied helpers: `sh`, base64→bytes, `ensureHttps`, `stripHtml`, motion
+envelope, the `[Salida real de…]` format), **repeated magic numbers** (the `-1.6` floor in 4 files; inline palette/typography
+with no tokens module), **dead pass-throughs** (`visionLoop` re-exports `frameStore`), and **robustness
+polish** (`get_weather` with no timeout, `console.error` instead of the logger, the launcher with fragile steps). None
+urgent; they get swept little by little, or along with whatever refactor touches the area they belong to. Full list in the
+workflow journal.
 
 ---
 
-## Cómo seguimos (propuesta de tandas)
-1. **Seguridad (antes de exponer/publicar):** C1–C4 + gate del terminal + SSRF. ~1 sesión, casi todo S.
-2. **Barrido de código muerto:** avatares+preload 19MB, toolSchemas/names, cmdAllowlist, trustModel, recall_memory,
-   Tauri, estado zombie del store. Adelgaza ~500 líneas + 19MB. Bajo riesgo.
-3. **React perf + Electron:** selectores del store, `lib/api.js` (arregla panels), race de connect, timers de visema.
-4. **Dedup estructural:** `dataDir`/`jsonFile`, wrapper de errores API, tags de acción de una sola fuente,
-   `motionUtils`, capa determinista del orchestrator, `sidecar/common.py`.
-5. **Red de seguridad:** ESLint en los 3 repos + tests table-driven de la capa regex/DANGER + fix del test que
-   corrompe memoria.
-6. **Docs:** pasada de consistencia (README/CLAUDE.md/.env.example).
+## Next steps (proposed batches)
+1. **Security (before exposing/publishing):** C1–C4 + the terminal gate + SSRF. ~1 session, almost all S.
+2. **Dead-code sweep:** avatars+19MB preload, toolSchemas/names, cmdAllowlist, trustModel, recall_memory,
+   Tauri, zombie state in the store. Trims ~500 lines + 19MB. Low risk.
+3. **React perf + Electron:** store selectors, `lib/api.js` (fixes the panels), the connect race, viseme timers.
+4. **Structural dedup:** `dataDir`/`jsonFile`, the API error wrapper, action tags from a single source,
+   `motionUtils`, the orchestrator's deterministic layer, `sidecar/common.py`.
+5. **Safety net:** ESLint in the 3 repos + table-driven tests for the regex/DANGER layer + fix for the test that
+   corrupts memory.
+6. **Docs:** consistency pass (README/CLAUDE.md/.env.example).
 
-*Decime qué tanda arranco (o hallazgos sueltos) y lo aplico en commits separados como pedrochgdev.*
+*Tell me which batch to start with (or individual findings) and I'll apply it in separate commits as pedrochgdev.*

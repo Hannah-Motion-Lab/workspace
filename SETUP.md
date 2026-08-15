@@ -1,31 +1,31 @@
-# Setup de Hannah en una máquina nueva
+# Hannah setup on a new machine
 
-Guía para dejar Hannah corriendo desde cero. Pensada para **Arch / CachyOS** (los comandos de
-paquetes son `pacman`; en otras distros cambiá solo esa parte).
+Guide to get Hannah running from scratch. Written for **Arch / CachyOS** (the package commands
+are `pacman`; on other distros change only that part).
 
-> **Lo importante primero:** clonar los repos **no alcanza**. Los pesos de los modelos (voz,
-> gestos) están gitignored porque pesan ~700 MB, así que hay que conseguirlos aparte. Este
-> documento marca cuáles son obligatorios y qué se rompe si falta cada uno.
+> **The important bit first:** cloning the repos is **not enough**. The model weights (voice,
+> gestures) are gitignored because they weigh ~700 MB, so you have to get them separately. This
+> document marks which ones are mandatory and what breaks if each one is missing.
 
 ---
 
-## 0. Estructura esperada
+## 0. Expected structure
 
-Todo cuelga de una carpeta de trabajo (el "meta-repo"). Los nombres de las carpetas importan:
-el launcher y los venvs los asumen.
+Everything lives under a single working folder (the "meta-repo"). The folder names matter: the
+launcher and the venvs assume them.
 
 ```
-Hannah-Motion/            ← este repo (launcher + docs)
-├── hannah                ← launcher bash (Super+H)
+Hannah-Motion/            ← this repo (launcher + docs)
+├── hannah                ← bash launcher (Super+H)
 ├── hannah-backend/       ← repo: backend
 ├── hannah-frontend/      ← repo: frontend
-├── hannah-motion-lab/    ← repo: modelo de gestos (opcional pero recomendado)
-├── hannah-desktop/       ← repo: app Electron (opcional)
-└── .venv/                ← venv del sidecar EMAGE (solo si usás MOTION_PROVIDER=emage)
+├── hannah-motion-lab/    ← repo: gesture model (optional but recommended)
+├── hannah-desktop/       ← repo: Electron app (optional)
+└── .venv/                ← EMAGE sidecar venv (only if you use MOTION_PROVIDER=emage)
 ```
 
 ```bash
-git clone <url-de-este-repo> Hannah-Motion && cd Hannah-Motion
+git clone <url-of-this-repo> Hannah-Motion && cd Hannah-Motion
 git clone https://github.com/Hannah-Motion-Lab/backend.git      hannah-backend
 git clone https://github.com/Hannah-Motion-Lab/frontend.git     hannah-frontend
 git clone https://github.com/Hannah-Motion-Lab/motion-model.git hannah-motion-lab
@@ -33,33 +33,33 @@ git clone https://github.com/Hannah-Motion-Lab/motion-model.git hannah-motion-la
 
 ---
 
-## 1. Requisitos del sistema
+## 1. System requirements
 
 ```bash
 sudo pacman -S nodejs npm python python-pip git curl
-# opcional pero recomendado (crea los venvs mucho más rápido):
+# optional but recommended (creates the venvs much faster):
 sudo pacman -S uv
 ```
 
-- **Node 20+** y **Python 3.12+**.
-- **GPU NVIDIA**: instalá los drivers + CUDA. Todo el stack cabe en **≤16 GB de VRAM**.
-- **GPU AMD / sin GPU**: funciona igual, pero los sidecars caen a **CPU** (más lento, sobre todo
-  el TTS). El sidecar EMAGE (opcional) sí necesita CUDA.
+- **Node 20+** and **Python 3.12+**.
+- **NVIDIA GPU**: install the drivers + CUDA. The whole stack fits in **≤16 GB of VRAM**.
+- **AMD GPU / no GPU**: it still works, but the sidecars fall back to **CPU** (slower, especially
+  the TTS). The EMAGE sidecar (optional) does need CUDA.
 
 ---
 
-## 2. Ollama (el cerebro)
+## 2. Ollama (the brain)
 
 ```bash
-sudo pacman -S ollama          # o: curl -fsSL https://ollama.com/install.sh | sh
-systemctl --user enable --now ollama     # o simplemente: ollama serve
+sudo pacman -S ollama          # or: curl -fsSL https://ollama.com/install.sh | sh
+systemctl --user enable --now ollama     # or just: ollama serve
 
-ollama pull qwen2.5:7b         # LLM principal (~5 GB) — el que mejor emite las acciones
-ollama pull nomic-embed-text   # embeddings para la memoria (~275 MB)
-ollama pull moondream          # visión: describe lo que ve la cámara (~1.7 GB)
+ollama pull qwen2.5:7b         # main LLM (~5 GB) — the best at emitting the actions
+ollama pull nomic-embed-text   # embeddings for the memory (~275 MB)
+ollama pull moondream          # vision: describes what the camera sees (~1.7 GB)
 ```
 
-Verificá: `curl -s localhost:11434/api/tags` debe listar los tres.
+Check it: `curl -s localhost:11434/api/tags` must list all three.
 
 ---
 
@@ -71,45 +71,46 @@ npm install
 cp .env.example .env
 ```
 
-Editá `.env` — lo mínimo:
+Edit `.env` — the bare minimum:
 
 ```bash
-LLM_MODEL=qwen2.5:7b       # el ejemplo trae llama3.1:8b; qwen2.5 anda mejor con acciones
-TOOLS_ENABLED=true         # que Hannah pueda actuar (internet, abrir/cerrar, comandos)
-TOOLS_SYSTEM_CONTROL=true  # TERMINAL REAL — leé la advertencia de seguridad más abajo
+LLM_MODEL=qwen2.5:7b       # the example ships llama3.1:8b; qwen2.5 does better with actions
+TOOLS_ENABLED=true         # let Hannah act (internet, open/close, commands)
+TOOLS_SYSTEM_CONTROL=true  # REAL TERMINAL — read the security warning further down
 ```
 
-> **`HOST` queda en `127.0.0.1`** (recomendado). El acceso desde el celular funciona igual:
-> entra por Vite (`:5173`), que hace de proxy. No lo pongas en `0.0.0.0` salvo que sepas
-> lo que hacés: expondría la terminal, tus API keys y tu memoria a toda la red.
+> **`HOST` stays at `127.0.0.1`** (recommended). Access from your phone still works: it comes in
+> through Vite (`:5173`), which acts as a proxy. Don't set it to `0.0.0.0` unless you know what
+> you're doing: it would expose the terminal, your API keys and your memory to the whole network.
 
-### Sidecars de Python (ASR, TTS, visión)
+### Python sidecars (ASR, TTS, vision)
 
 ```bash
 cd hannah-backend/sidecar
-uv venv .venv --python 3.12          # o: python -m venv .venv
-uv pip install -r requirements.txt   # o: .venv/bin/pip install -r requirements.txt
+uv venv .venv --python 3.12          # or: python -m venv .venv
+uv pip install -r requirements.txt   # or: .venv/bin/pip install -r requirements.txt
 ```
 
-### Pesos de la voz (OBLIGATORIO — sin esto Hannah no habla)
+### Voice weights (MANDATORY — without this Hannah doesn't speak)
 
-No están en git. Bajá los del release **v1.0** de `kokoro-onnx` a `hannah-backend/sidecar/tts/`:
+They are not in git. Download them from the **v1.0** release of `kokoro-onnx` into
+`hannah-backend/sidecar/tts/`:
 
 ```bash
 cd hannah-backend/sidecar/tts
-# kokoro-v1.0.onnx (~311 MB) y voices-v1.0.bin (~27 MB)
+# kokoro-v1.0.onnx (~311 MB) and voices-v1.0.bin (~27 MB)
 # release: https://github.com/thewh1teagle/kokoro-onnx/releases  (model-files v1.0)
 curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
 
-Deben quedar exactamente con esos nombres, al lado de `main.py`. (Si el release cambió de
-lugar, buscá "kokoro-onnx model files v1.0" — la versión del paquete es `kokoro-onnx==0.4.7`.)
+They must end up with exactly those names, next to `main.py`. (If the release moved somewhere
+else, search for "kokoro-onnx model files v1.0" — the package version is `kokoro-onnx==0.4.7`.)
 
-### YOLO (opcional)
+### YOLO (optional)
 
-Solo si vas a usar `VISION_PROVIDER=yolo` en vez del VLM por defecto: poné `yolov8n.pt` en
-`hannah-backend/sidecar/vision/` (lo descarga `ultralytics` la primera vez que se usa).
+Only if you're going to use `VISION_PROVIDER=yolo` instead of the default VLM: put `yolov8n.pt` in
+`hannah-backend/sidecar/vision/` (`ultralytics` downloads it the first time it's used).
 
 ---
 
@@ -117,14 +118,14 @@ Solo si vas a usar `VISION_PROVIDER=yolo` en vez del VLM por defecto: poné `yol
 
 ```bash
 cd hannah-frontend
-npm install --legacy-peer-deps   # el flag NO es opcional (vite 5 vs plugin-basic-ssl)
+npm install --legacy-peer-deps   # the flag is NOT optional (vite 5 vs plugin-basic-ssl)
 ```
 
-El avatar (`public/avatar.glb`) y los clips de gestos ya vienen en el repo.
+The avatar (`public/avatar.glb`) and the gesture clips already ship in the repo.
 
 ---
 
-## 5. Modelo de gestos (para que se mueva al hablar)
+## 5. Gesture model (so she moves while speaking)
 
 ```bash
 cd hannah-motion-lab
@@ -132,102 +133,103 @@ uv venv .venv --python 3.12
 uv pip install -r requirements.txt
 ```
 
-**Los pesos entrenados NO están en git** (`runs/` está gitignored). Sin ellos el sidecar de
-motion no levanta y Hannah habla **sin gestos co-speech** (el resto funciona normal).
+**The trained weights are NOT in git** (`runs/` is gitignored). Without them the motion sidecar
+doesn't start and Hannah speaks **without co-speech gestures** (everything else works normally).
 
-Necesitás estos dos archivos, copiados de la máquina donde se entrenó:
+You need these two files, copied from the machine where it was trained:
 
 ```
 hannah-motion-lab/runs/vae/latest.pt     (~175 MB)
 hannah-motion-lab/runs/flow/latest.pt    (~214 MB)
 ```
 
-(Se pueden re-entrenar con los scripts de `src/motionlab/train/`, pero lleva horas de GPU.)
-Las rutas se pueden cambiar con las env `VAE_CKPT` / `FLOW_CKPT`.
+(They can be re-trained with the scripts in `src/motionlab/train/`, but it takes hours of GPU time.)
+The paths can be changed with the `VAE_CKPT` / `FLOW_CKPT` env vars.
 
 ---
 
-## 6. Arrancar
+## 6. Bringing it up
 
-**Opción A — todo de una (Linux):**
-
-```bash
-./hannah          # levanta Ollama, sidecars, backend, Vite y abre el overlay
-```
-
-Conviene atarlo a un atajo de teclado (el autor usa **Super+H**). En Hyprland:
-
-```
-bind = SUPER, H, exec, /ruta/a/Hannah-Motion/hannah
-```
-
-**Opción B — a mano (para ver los logs):**
+**Option A — everything at once (Linux):**
 
 ```bash
-cd hannah-backend && npm run sidecar:tts     # :8002  (voz — imprescindible)
-cd hannah-backend && npm run sidecar:asr     # :8001  (escuchar)
-cd hannah-motion-lab && .venv/bin/python -m uvicorn serve.main:app --port 8005   # gestos
+./hannah          # starts Ollama, sidecars, backend, Vite and opens the overlay
+```
+
+It's worth binding it to a keyboard shortcut (the author uses **Super+H**). On Hyprland:
+
+```
+bind = SUPER, H, exec, /path/to/Hannah-Motion/hannah
+```
+
+**Option B — by hand (to see the logs):**
+
+```bash
+cd hannah-backend && npm run sidecar:tts     # :8002  (voice — essential)
+cd hannah-backend && npm run sidecar:asr     # :8001  (listening)
+cd hannah-motion-lab && .venv/bin/python -m uvicorn serve.main:app --port 8005   # gestures
 cd hannah-backend && npm run dev             # :3001  backend
-cd hannah-frontend && npm run dev            # :5173  interfaz  → abrir en el navegador
+cd hannah-frontend && npm run dev            # :5173  UI  → open it in the browser
 ```
 
-**Desde el celular / otra compu de la red:** entrá a `https://<ip-de-la-pc>:5173` (aceptá el
-certificado autofirmado). Vite proxea al backend, así que funciona todo, terminal incluida.
+**From your phone / another computer on the network:** go to `https://<pc-ip>:5173` (accept the
+self-signed certificate). Vite proxies to the backend, so everything works, terminal included.
 
 ---
 
-## 7. Verificar que quedó bien
+## 7. Checking it all came out right
 
 ```bash
 curl -s localhost:3001/api/v1/health          # backend
-curl -s localhost:8002/health                 # TTS (dice si usa CUDA o CPU)
-curl -s localhost:8005/health                 # gestos
-curl -s localhost:11434/api/tags              # modelos de Ollama
+curl -s localhost:8002/health                 # TTS (says whether it's on CUDA or CPU)
+curl -s localhost:8005/health                 # gestures
+curl -s localhost:11434/api/tags              # Ollama models
 ```
 
-Después, en la interfaz: decile algo. Deberías tener **respuesta escrita + voz + movimiento**.
+Then, in the interface: say something to her. You should get **written answer + voice + movement**.
 
-| Si falta… | Síntoma |
+| If missing… | Symptom |
 |---|---|
-| pesos de Kokoro | responde por texto pero **no se oye nada** |
-| `runs/*.pt` del motion-lab | habla pero **no gesticula** al hablar |
-| Ollama / el modelo | **no responde nada** |
-| sidecar ASR | no te entiende por voz (el texto sí funciona) |
+| Kokoro weights | replies in text but **you hear nothing** |
+| the motion-lab's `runs/*.pt` | speaks but **doesn't gesture** while speaking |
+| Ollama / the model | **no answer at all** |
+| ASR sidecar | doesn't understand you by voice (text does work) |
 
 ---
 
-## 8. El overlay flotante en tu escritorio
+## 8. The floating overlay on your desktop
 
-**Empezá por acá:**
+**Start here:**
 
 ```bash
-./hannah doctor      # dice si tu entorno soporta el overlay, y qué falta
+./hannah doctor      # tells you whether your environment supports the overlay, and what's missing
 ```
 
-Hannah puede flotar **encima de todo** en cualquier escritorio, pero la vía cambia:
+Hannah can float **on top of everything** on any desktop, but how she gets there depends on the
+setup:
 
-| Escritorio / sesión | Cómo flota | Qué necesitás |
+| Desktop / session | How it floats | What you need |
 |---|---|---|
-| **Hyprland** | nativo (`hyprctl`) | nada |
-| **KDE Plasma** (Wayland o X11) | KWin | `kdotool` (recomendado) o `wmctrl` |
-| **GNOME, XFCE, Cinnamon, MATE, i3** (X11) | EWMH estándar | `wmctrl` |
-| **GNOME/KDE en Wayland** | vía **XWayland** | usar la **app de escritorio** (fuerza XWayland) |
-| **Windows / macOS** | nativo de Electron | nada |
+| **Hyprland** | native (`hyprctl`) | nothing |
+| **KDE Plasma** (Wayland or X11) | KWin | `kdotool` (recommended) or `wmctrl` |
+| **GNOME, XFCE, Cinnamon, MATE, i3** (X11) | standard EWMH | `wmctrl` |
+| **GNOME/KDE on Wayland** | via **XWayland** | use the **desktop app** (it forces XWayland) |
+| **Windows / macOS** | native (Electron) | nothing |
 
-> **Por qué XWayland:** en Wayland *nativo* el protocolo **prohíbe** que una app se ponga
-> encima o se mueva sola (es decisión de diseño de Wayland, no un bug). Por eso la app de
-> escritorio arranca forzada a XWayland (`ozone-platform=x11`), donde la ventana es X11 real
-> y todos los compositores respetan el "siempre encima". Si querés experimentar con Wayland
-> nativo: `HANNAH_OZONE=wayland` — pero perdés flotar y mover entre monitores.
+> **Why XWayland:** on *native* Wayland the protocol **forbids** an app from putting itself
+> on top or moving itself (that's a Wayland design decision, not a bug). That's why the desktop
+> app starts forced onto XWayland (`ozone-platform=x11`), where the window is a real X11 one
+> and every compositor respects "always on top". If you want to experiment with native
+> Wayland: `HANNAH_OZONE=wayland` — but you lose floating and moving between monitors.
 
-**La forma más portable** es la app de escritorio, que ya trae todo resuelto:
+**The most portable route** is the desktop app, which already has it all solved:
 
 ```bash
-cd hannah-frontend && npm run build          # genera el dist que empaqueta la app
+cd hannah-frontend && npm run build          # builds the dist that the app bundles
 cd ../hannah-desktop && npm install && npm start
 ```
 
-Instalá además `wmctrl` (o `kdotool` en KDE) para que Hannah pueda **moverse por voz**
+Also install `wmctrl` (or `kdotool` on KDE) so Hannah can **move by voice**
 ("andá al centro", "pasate a la otra pantalla"):
 
 ```bash
@@ -236,80 +238,81 @@ sudo apt install wmctrl      # Debian/Ubuntu
 sudo dnf install wmctrl      # Fedora
 ```
 
-**Si tu escritorio no aparece flotando:** corré `./hannah doctor`, que te dice exactamente
-qué falta. Y si estás en GNOME Wayland y aun con la app no flota, reportalo con la salida de
-`wmctrl -l` y `xprop -name Hannah _NET_WM_STATE` (ver checklist abajo).
+**If it doesn't float on your desktop:** run `./hannah doctor`, which tells you exactly what's
+missing. And if you're on GNOME Wayland and it still doesn't float even with the app, report it
+with the output of `wmctrl -l` and `xprop -name Hannah _NET_WM_STATE` (see checklist below).
 
-### Checklist para verificar en tu máquina (si no es Hyprland)
-
-```bash
-./hannah doctor                              # 1. veredicto del entorno
-wmctrl -l | grep -i hannah                   # 2. ¿la ventana es visible para X11?
-xprop -name Hannah _NET_WM_STATE             # 3. ¿aparece _NET_WM_STATE_ABOVE?
-```
-Abrí otra ventana maximizada encima: Hannah debería quedar visible por delante.
-
-## 8b. Apagar Hannah (y recuperar la VRAM)
-
-Los sidecars y los modelos cargados **retienen memoria de la GPU mientras viven** — en una sesión
-típica son unos 14GB. Por eso:
+### Checklist to verify on your machine (if it's not Hyprland)
 
 ```bash
-./hannah stop               # apaga app, backend, sidecars, Vite y descarga los modelos de Ollama
-./hannah stop --dry-run     # muestra qué mataría, sin tocar nada
-./hannah stop --keep-ollama # deja los modelos calientes (arranca más rápido la próxima)
+./hannah doctor                              # 1. verdict on your environment
+wmctrl -l | grep -i hannah                   # 2. is the window visible to X11?
+xprop -name Hannah _NET_WM_STATE             # 3. does _NET_WM_STATE_ABOVE show up?
+```
+Open another maximized window on top: Hannah should stay visible in front.
+
+## 8b. Shutting Hannah down (and getting the VRAM back)
+
+The sidecars and the loaded models **hold on to GPU memory for as long as they live** — in a
+typical session that's about 14GB. So:
+
+```bash
+./hannah stop               # shuts down app, backend, sidecars, Vite and unloads Ollama's models
+./hannah stop --dry-run     # shows what it would kill, without touching anything
+./hannah stop --keep-ollama # leaves the models warm (faster start next time)
 ```
 
-**Cerrar la ventana del overlay hace lo mismo automáticamente** si la abriste con `./hannah`. Si
-la arrancaste a mano (`npm run start:dev`), cerrarla NO apaga nada — así no te lleva por delante
-servicios que estabas usando para probar.
+**Closing the overlay window does the same thing automatically** if you opened it with `./hannah`.
+If you started it by hand (`npm run start:dev`), closing it does NOT shut anything down — that way
+it doesn't tear down services you were using for testing.
 
-Si Ollama corre como servicio de systemd (lo normal en Arch/CachyOS), el script **no puede** bajar
-el servicio porque corre como otro usuario: descarga los modelos de la VRAM, que es lo que ocupa
-lugar, y te dice el comando por si querés bajarlo entero (`sudo systemctl stop ollama`).
+If Ollama runs as a systemd service (the norm on Arch/CachyOS), the script **cannot** bring the
+service down because it runs as another user: it unloads the models from VRAM, which is what takes
+up the space, and prints the command in case you want to stop it entirely
+(`sudo systemctl stop ollama`).
 
-## 9. Seguridad — leé esto antes de activar la terminal
+## 9. Security — read this before enabling the terminal
 
-`TOOLS_SYSTEM_CONTROL=true` le da a Hannah una **shell real** en tu máquina (la misma que usa
-el panel ⌨). **No hay lista blanca de comandos**: puede ejecutar cualquier cosa. La única red
-es que los comandos destructivos (`rm`, `dd`, `mkfs`, `shutdown`, `git --force`…) **te piden
-confirmación** en un modal — es *best-effort*, no una barrera de seguridad.
+`TOOLS_SYSTEM_CONTROL=true` gives Hannah a **real shell** on your machine (the same one the ⌨
+panel uses). **There is no command allowlist**: it can run anything. The only safety net is that
+destructive commands (`rm`, `dd`, `mkfs`, `shutdown`, `git --force`…) **ask you for confirmation**
+in a modal — that's *best-effort*, not a security barrier.
 
-Si no lo necesitás, dejalo en `false`: Hannah sigue conversando, viendo por la cámara,
-buscando en internet y abriendo páginas.
+If you don't need it, leave it at `false`: Hannah still converses, sees through the camera,
+searches the internet and opens pages.
 
-Tampoco compartas tu `hannah-backend/.env` ni `hannah-backend/data/` (ahí viven las API keys y
-tu memoria de conversaciones); ya están gitignored.
+Don't share your `hannah-backend/.env` or `hannah-backend/data/` either (that's where the API keys
+and your conversation memory live); they're already gitignored.
 
 ---
 
-## 10. Problemas comunes
+## 10. Common problems
 
-**`npm install` falla en el frontend** (`ERESOLVE`) → usá `--legacy-peer-deps`. Es un conflicto
-conocido entre vite 5 y `@vitejs/plugin-basic-ssl`.
+**`npm install` fails on the frontend** (`ERESOLVE`) → use `--legacy-peer-deps`. It's a known
+conflict between vite 5 and `@vitejs/plugin-basic-ssl`.
 
-**Super+H no hace nada** → suele ser un Vite levantado a mano en HTTPS ocupando el `:5173`; el
-overlay lo necesita en HTTP. Cerralo (`pkill -f 'bin/vite'`) y volvé a lanzar; el launcher te
-avisa si detecta ese caso. Revisá también `.hannah-launch.log`.
+**Super+H does nothing** → it's usually a Vite started by hand on HTTPS occupying `:5173`; the
+overlay needs it on HTTP. Close it (`pkill -f 'bin/vite'`) and launch again; the launcher
+warns you if it detects that case. Check `.hannah-launch.log` too.
 
-**No hay voz** → mirá que el sidecar TTS esté arriba (`curl localhost:8002/health`) y que los
-dos archivos de Kokoro estén en `sidecar/tts/` con el nombre exacto.
+**No voice** → make sure the TTS sidecar is up (`curl localhost:8002/health`) and that the
+two Kokoro files are in `sidecar/tts/` with the exact name.
 
-**"No responde nada" de golpe** → mirá que Ollama esté corriendo y que el modelo de `.env`
-exista (`ollama list`).
+**Suddenly "no answer at all"** → make sure Ollama is running and that the model in `.env` exists
+(`ollama list`).
 
-**El micrófono no funciona en la LAN** → el navegador exige HTTPS fuera de localhost; usá
-`https://<ip>:5173` (no `http://`) y aceptá el certificado.
+**The microphone doesn't work over the LAN** → the browser requires HTTPS outside localhost; use
+`https://<ip>:5173` (not `http://`) and accept the certificate.
 
-**La app de escritorio no arranca: `Error: spawn .../electron/dist/electron ENOENT`** (fijate
-si la ruta del error termina en `\n`) → el archivo `node_modules/electron/path.txt` quedó con
-un salto de línea y Electron lo lee sin recortarlo. Pasa cuando el binario se instaló a mano
-(postinstall bloqueado). Se arregla con:
+**The desktop app doesn't start: `Error: spawn .../electron/dist/electron ENOENT`** (check whether
+the path in the error ends in `\n`) → the file `node_modules/electron/path.txt` ended up with a
+line break and Electron reads it without trimming it. It happens when the binary was installed by
+hand (postinstall blocked). Fix it with:
 ```bash
 cd hannah-desktop && printf 'electron' > node_modules/electron/path.txt
 ```
-Si además falta el binario (`dist/electron` no existe), reinstalá permitiendo el postinstall:
-`npm rebuild electron` o `npm install electron --force`.
+If the binary is missing as well (`dist/electron` doesn't exist), reinstall allowing the
+postinstall: `npm rebuild electron` or `npm install electron --force`.
 
-**Todo va lento** → revisá si los sidecars están en CPU: `curl -s localhost:8002/health` dice
-el provider. Sin CUDA, el TTS es el cuello de botella.
+**Everything is slow** → check whether the sidecars are on CPU: `curl -s localhost:8002/health` says
+the provider. Without CUDA, the TTS is the bottleneck.

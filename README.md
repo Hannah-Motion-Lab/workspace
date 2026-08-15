@@ -1,149 +1,158 @@
-# Hannah — avatar IA interactivo en tiempo real
+# Hannah — real-time interactive AI avatar
 
-Hannah es una **compañera IA** que ves y oyes: hablas (o le muestras la cámara) y un
-avatar 3D responde con voz, lip-sync, emoción y **gestos co-speech**, viviendo como un
-**overlay flotante** en tu escritorio. Todo el stack por defecto es **local** (Ollama,
-Whisper, Kokoro, YOLO/VLM). Además puede **usar internet** y **una terminal real**.
+Hannah is an **AI companion** you can see and hear: you speak (or show her the camera) and a
+3D avatar answers with voice, lip-sync, emotion and **co-speech gestures**, living as a
+**floating overlay** on your desktop. The whole default stack is **local** (Ollama,
+Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real terminal**.
 
-## Componentes (repos)
+## Components (repos)
 
-| Dir | Qué es | Lenguaje |
+| Dir | What it is | Language |
 |-----|--------|----------|
-| `hannah-backend/` | Gateway WS + REST: orquesta ASR→LLM→TTS→lip-sync + sidecars Python (Whisper, Kokoro, YOLO/VLM). Tools (internet, terminal), memoria, control de ventana. | Node (ESM) |
-| `hannah-frontend/` | Cliente React + three.js: avatar VRoid/VRM, mic, cámara, HUD, panel de terminal. | React/Vite |
-| `hannah-motion-lab/` | Modelo texto→movimiento (gestos) servido en :8005. | Python |
-| `hannah-desktop/` | **App de escritorio Electron** (overlay universal Win/Mac/Linux). | Electron |
-| `hannah` | **Launcher**: levanta todo el stack y abre el overlay (por defecto, la app). | Bash |
+| `hannah-backend/` | WS gateway + REST: orchestrates ASR→LLM→TTS→lip-sync + Python sidecars (Whisper, Kokoro, YOLO/VLM). Tools (internet, terminal), memory, window control. | Node (ESM) |
+| `hannah-frontend/` | React + three.js client: VRoid/VRM avatar, mic, camera, HUD, terminal panel. | React/Vite |
+| `hannah-motion-lab/` | text→motion model (gestures) served on :8005. | Python |
+| `hannah-desktop/` | **Electron desktop app** (universal overlay Win/Mac/Linux). | Electron |
+| `hannah` | **Launcher**: brings up the whole stack and opens the overlay (by default, the app). | Bash |
 
-## Arquitectura en 30s
+## Architecture in 30s
 
-- **App web universal**: backend (Node) + frontend (web) corren en cualquier OS/navegador.
-- **Capa overlay** (flotar encima, mover entre pantallas, mirada que sigue el cursor):
-  dos formas de correrla —
-  1. **Modo navegador** (`hannah` launcher): abre el frontend en un navegador en modo-app
-     y lo coloca con el **adaptador** del entorno (Hyprland vía `hyprctl`, X11 vía
-     `xdotool`/`wmctrl`). Ligero, sin instalar nada extra. Linux.
-  2. **App Electron** (`hannah-desktop`): Chromium, overlay con APIs cross-platform
+- **Universal web app**: backend (Node) + frontend (web) run on any OS/browser.
+- **Overlay layer** (float on top, move between screens, gaze that follows the cursor):
+  two ways to run it —
+  1. **Browser mode** (`hannah` launcher): opens the frontend in a browser in app-mode
+     and places it with the environment's **adapter** (Hyprland via `hyprctl`, X11 via
+     `xdotool`/`wmctrl`). Lightweight, nothing extra to install. Linux.
+  2. **Electron app** (`hannah-desktop`): Chromium, overlay with cross-platform APIs
      (`setAlwaysOnTop`, `setBounds`, `getCursorScreenPoint`, `getAllDisplays`). **Win/Mac/Linux**.
 
-## Puertos y red
+## Ports and network
 
-| Servicio | Puerto | |
+| Service | Port | |
 |---|---|---|
-| Backend (API + WS) | 3001 | escucha en **127.0.0.1** (env `HOST`) |
-| Frontend (Vite) | 5173 | escucha en `0.0.0.0` — por acá entra el celular |
-| ASR · TTS · Visión | 8001 · 8002 · 8003 | sidecars locales |
-| Motion (lab, default) | 8005 | `hannah-motion-lab` · EMAGE en 8004 (fallback) |
+| Backend (API + WS) | 3001 | listens on **127.0.0.1** (env `HOST`) |
+| Frontend (Vite) | 5173 | listens on `0.0.0.0` — this is how your phone gets in |
+| ASR · TTS · Vision | 8001 · 8002 · 8003 | local sidecars |
+| Motion (lab, default) | 8005 | `hannah-motion-lab` · EMAGE on 8004 (fallback) |
 | Ollama | 11434 | LLM + embeddings |
 
-> **Acceso desde el celular/otra compu:** entrás a `https://<ip-de-tu-pc>:5173` y Vite hace de
-> proxy hacia el backend local. El backend **no** queda expuesto a la red (ni la terminal, ni
-> tus API keys, ni la memoria). Solo poné `HOST=0.0.0.0` si sabés lo que hacés.
+> **Access from your phone/another computer:** you go to `https://<your-pc-ip>:5173` and Vite acts
+> as a proxy to the local backend. The backend is **not** exposed to the network (neither the
+> terminal, nor your API keys, nor the memory). Only set `HOST=0.0.0.0` if you know what you're doing.
 
-**Idioma:** hoy Hannah **habla inglés** (el protocolo del LLM lo fuerza, en `config.js`); el ASR
-detecta idioma solo, así que le podés hablar en español. Se cambia editando `llm.protocol` y la
-voz (`ELEVENLABS_VOICE_ID`: `af_*`/`am_*` inglés, `ef_*`/`em_*` español…).
+**Language: English out, any language in — and the reason is the voice, not the architecture.**
+You can talk to her in whatever language you like: the ASR auto-detects the input and already
+returns the detected language. What is pinned is the *output*, and it is pinned for one reason
+only: **`af_heart` is the only Kokoro voice that sounds good**. English ships 28 voices; Spanish
+ships 3, and they sound bad enough that using them is worse than answering in English.
 
-**Memoria:** además del historial de sesión, guarda memoria de largo plazo en SQLite
-(`hannah-backend/data/memory.db`) con resumen rodante y recall vectorial.
+So `Reply ALWAYS in English` in `llm.protocol` (`config.js`) is **not an arbitrary lock** — don't
+remove it expecting multilingual output and better results; you will get worse audio. Going
+multilingual is three small changes (thread the detected language through the turn, relax the
+protocol, pick the voice per language) and the ASR **already provides that data today** — nothing
+consumes it. The blocker is the TTS, so the day you plug in a better one, that is the work.
 
-## Requisitos
+**Memory:** besides the session history, it keeps long-term memory in SQLite
+(`hannah-backend/data/memory.db`) with a rolling summary and vector recall.
 
-> **Objetivo de VRAM: ≤16GB** — todo el stack (LLM + embeddings + TTS + ASR + visión +
-> motion) cabe en 16GB o menos. Por eso el LLM es un **7B** y los **tools usan un
-> protocolo de acciones por tags** (fiable en modelos chicos), no function-calling.
+## Requirements
 
-- **Ollama** con `qwen2.5:7b` (chat + tools, ~5GB) y `nomic-embed-text` (memoria);
-  `llama3.1:8b` sirve si no usas tools.
-- Python 3.12 + venvs para los sidecars (detalle en `hannah-backend/README.md`).
-- Node 20+. Para la app Electron: nada extra (trae Chromium).
-- Overlay en Linux: `hyprctl` (Hyprland) **o** `xdotool`+`wmctrl` (X11).
+> **VRAM target: ≤16GB** — the whole stack (LLM + embeddings + TTS + ASR + vision +
+> motion) fits in 16GB or less. That's why the LLM is a **7B** and the **tools use a
+> tag-based action protocol** (reliable on small models), not function-calling.
 
-## Correr
+- **Ollama** with `qwen2.5:7b` (chat + tools, ~5GB) and `nomic-embed-text` (memory);
+  `llama3.1:8b` works if you don't use tools.
+- Python 3.12 + venvs for the sidecars (details in `hannah-backend/README.md`).
+- Node 20+. For the Electron app: nothing extra (it ships Chromium).
+- Overlay on Linux: `hyprctl` (Hyprland) **or** `xdotool`+`wmctrl` (X11).
+
+## Run
 
 ```bash
-# 1) instalar (una vez)
+# 1) install (once)
 cd hannah-backend  && npm install && cp .env.example .env
-cd ../hannah-frontend && npm install --legacy-peer-deps   # ojo: sin el flag falla (vite 5 vs plugin-basic-ssl)
+cd ../hannah-frontend && npm install --legacy-peer-deps   # careful: without the flag it fails (vite 5 vs plugin-basic-ssl)
 
-# 2) levanta todo (Ollama, sidecars, backend, Vite) y abre el overlay:
-./hannah                       # abre la app Electron; si ya está abierta, la enfoca
-./hannah stop                  # apaga TODO y libera la VRAM (modelos de Ollama incluidos)
-./hannah doctor                # diagnostica si el overlay va a flotar acá, y qué falta
-HANNAH_MODE=browser ./hannah   # alternativa liviana: el frontend en un navegador
+# 2) brings up everything (Ollama, sidecars, backend, Vite) and opens the overlay:
+./hannah                       # opens the Electron app; if it's already open, it focuses it
+./hannah stop                  # shuts EVERYTHING down and frees the VRAM (Ollama models included)
+./hannah doctor                # diagnoses whether the overlay will float here, and what's missing
+HANNAH_MODE=browser ./hannah   # lightweight alternative: the frontend in a browser
 
-# 2') o la app de escritorio sola (Win/Mac/Linux), con el backend ya corriendo:
-cd hannah-desktop && npm install && npm run start:dev   # usa el Vite de :5173
-cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # sin Vite, desde dist/
+# 2') or the desktop app alone (Win/Mac/Linux), with the backend already running:
+cd hannah-desktop && npm install && npm run start:dev   # uses the Vite on :5173
+cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # no Vite, from dist/
 ```
 
-> **Cerrar la ventana apaga todo.** Los sidecars y los modelos cargados retienen VRAM mientras
-> viven (~14GB en una sesión típica), así que al cerrar el overlay lanzado por `./hannah` se
-> apaga el stack entero y se descargan los modelos de Ollama. Si preferís conservarlos calientes:
-> `./hannah stop --keep-ollama`, o `--dry-run` para ver qué se apagaría sin tocar nada.
+> **Closing the window shuts everything down.** The sidecars and the loaded models hold on to VRAM
+> for as long as they're running (~14GB in a typical session), so closing the overlay launched by
+> `./hannah` shuts the whole stack down and unloads the Ollama models. If you'd rather keep them warm:
+> `./hannah stop --keep-ollama`, or `--dry-run` to see what would be shut down without touching anything.
 
-## Documentación por repo
+## Per-repo documentation
 
-| Dónde | Qué encontrás |
+| Where | What you'll find |
 |---|---|
-| `hannah-backend/README.md` | Contratos WS y REST, el recorrido de un turno, la capa determinista de acciones, configuración y decisiones de diseño |
-| `hannah-desktop/README.md` | Por qué XWayland, por qué los flags van en argv, la geometría vía compositor y el comportamiento de la ventana |
-| `hannah-frontend/README.md` | Avatar VRM, retarget desde geometría, estado y captura de audio |
-| `SETUP.md` | Levantar todo en una máquina nueva, paso a paso |
-| `SKILLS.md` | Enseñarle capacidades sin tocar código |
+| `hannah-backend/README.md` | WS and REST contracts, the path a turn takes, the deterministic action layer, configuration and design decisions |
+| `hannah-desktop/README.md` | Why XWayland, why the flags go in argv, geometry via the compositor and window behavior |
+| `hannah-frontend/README.md` | VRM avatar, retarget from geometry, state and audio capture |
+| `SETUP.md` | Bring everything up on a new machine, step by step |
+| `SKILLS.md` | Teach her capabilities without touching code |
 
 ## Tools (internet + terminal)
 
-Están **OFF por defecto**. Se activan en tu `.env` (no como variables sueltas):
+They are **OFF by default**. You turn them on in your `.env` (in the file, not as stray shell
+variables):
 
 ```bash
 # hannah-backend/.env
-TOOLS_ENABLED=true          # acciones (internet, abrir/cerrar, comandos)
-TOOLS_SYSTEM_CONTROL=true   # master flag de la TERMINAL real (pty) — implica acceso shell
+TOOLS_ENABLED=true          # actions (internet, open/close, commands)
+TOOLS_SYSTEM_CONTROL=true   # master flag for the real TERMINAL (pty) — implies shell access
 ```
 
-- **Internet**: `web_search` (DuckDuckGo) y `fetch_url` (leer webs).
-- **Terminal**: shell persistente real (`node-pty`, soporta ssh/interactivos) + panel `⌨`
-  en la UI. **No hay allowlist de comandos**: con el flag activo corre cualquier cosa; la
-  única red es la **confirmación para destructivos** (`rm`, `dd`, `mkfs`, `shutdown`,
-  `git --force`…, regex `DANGER`, best-effort). `TOOLS_SYSTEM_CONTROL` gatea por igual
-  `run_command`, las skills de tipo `terminal` y el panel.
-- **Skills y referencia**: podés enseñarle capacidades sin tocar código —
-  `hannah-backend/skills/<nombre>/SKILL.md` (acción `run`/`terminal`/`open`/`search`, con
-  variantes por SO) y `reference/*.md` (cheat-sheets que guían al modelo). Ver `SKILLS.md`.
+- **Internet**: `web_search` (DuckDuckGo) and `fetch_url` (reading web pages).
+- **Terminal**: a real persistent shell (`node-pty`, handles ssh and interactive programs) + `⌨`
+  panel in the UI. **There is no command allowlist**: with the flag on it runs anything; the
+  only safety net is the **confirmation prompt for destructive commands** (`rm`, `dd`, `mkfs`,
+  `shutdown`, `git --force`…, `DANGER` regex, best-effort). `TOOLS_SYSTEM_CONTROL` gates
+  `run_command`, `terminal`-type skills and the panel alike.
+- **Skills and reference**: you can teach her capabilities without touching code —
+  `hannah-backend/skills/<name>/SKILL.md` (`run`/`terminal`/`open`/`search` action, with
+  per-OS variants) and `reference/*.md` (cheat-sheets that guide the model). See `SKILLS.md`.
 
-## Distribuir (builds por OS)
+## Distribute (per-OS builds)
 
 ```bash
 cd hannah-desktop
-npm run build:linux   # .AppImage / .deb   (probado: Hannah-*.AppImage corre self-contained)
-npm run build:win     # .exe  — requiere Windows o Wine (NO sale desde Linux pelado)
-npm run build:mac     # .dmg  — requiere macOS (imposible desde Linux)
+npm run build:linux   # .AppImage / .deb   (tested: Hannah-*.AppImage runs self-contained)
+npm run build:win     # .exe  — requires Windows or Wine (you can NOT build it from bare Linux)
+npm run build:mac     # .dmg  — requires macOS (impossible from Linux)
 ```
-> Antes de empaquetar: `cd hannah-frontend && npm run build` (el Electron carga ese `dist/`).
-> Para los tres SO a la vez, lo práctico es CI (GitHub Actions con runners nativos).
-> La app Electron es el **overlay**; sigue necesitando el **backend + Ollama + sidecars**
-> corriendo (local). Empaquetar el backend como servicio es trabajo futuro.
+> Before packaging: `cd hannah-frontend && npm run build` (the Electron loads that `dist/`).
+> For the three OSes at once, the practical way is CI (GitHub Actions with native runners).
+> The Electron app is the **overlay**; it still needs the **backend + Ollama + sidecars**
+> running (locally). Packaging the backend as a service is future work.
 
-## Matriz de plataformas (overlay)
+## Platform matrix (overlay)
 
-Corré **`./hannah doctor`**: te dice si tu entorno soporta el overlay y qué falta.
+Run **`./hannah doctor`**: it tells you whether your environment supports the overlay and what's missing.
 
-| Escritorio | Cómo flota | Requisito |
+| Desktop | How it floats | Requirement |
 |-----------|------------|-----------|
-| Hyprland | nativo (`hyprctl`) | — |
-| KDE Plasma (Wayland/X11) | KWin | `kdotool` o `wmctrl` |
+| Hyprland | native (`hyprctl`) | — |
+| KDE Plasma (Wayland/X11) | KWin | `kdotool` or `wmctrl` |
 | GNOME · XFCE · Cinnamon · MATE · i3 (X11) | EWMH | `wmctrl` |
-| GNOME/KDE en Wayland | vía XWayland | usar la app de escritorio |
-| Windows · macOS | nativo de Electron | — |
+| GNOME/KDE on Wayland | via XWayland | use the desktop app |
+| Windows · macOS | Electron native | — |
 
-> En **Wayland nativo** el protocolo prohíbe que una app se ponga encima o se mueva sola (es
-> su diseño). Por eso la app de escritorio fuerza **XWayland**, y así el mismo código flota en
-> todos los escritorios. Detalle en `SETUP.md`.
+> On **native Wayland** the protocol forbids an app from putting itself on top or moving itself
+> (that's by design). That's why the desktop app forces **XWayland**, and that way the same code
+> floats on every desktop. Details in `SETUP.md`.
 
-## Notas
+## Notes
 
-- **No retargeting** de motion a rigs foráneos (lección "zombie pose"): el avatar VRoid
-  usa un retarget calculado desde geometría. Ver CLAUDE.md.
-- Privacidad: audio en memoria, nunca a disco; no se loguea contenido del usuario.
-- Licencias de assets (SMPL-X no-comercial, Mixamo Adobe) — quedan gitignorados.
+- **No retargeting** of motion to foreign rigs ("zombie pose" lesson): the VRoid avatar
+  uses a retarget computed from geometry. See CLAUDE.md.
+- Privacy: audio in memory, never to disk; user content is never logged.
+- Asset licenses (SMPL-X non-commercial, Mixamo Adobe) — they stay gitignored.
