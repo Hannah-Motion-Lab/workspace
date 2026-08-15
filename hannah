@@ -105,14 +105,35 @@ is_safe_target() {
   return 0
 }
 
-# ¿El proceso es del proyecto? (por cwd o por su línea de comandos)
+# ¿El EJECUTABLE del proceso está dentro del repo? Se mira argv[0], no la línea entera:
+# que una ruta del proyecto aparezca como ARGUMENTO no lo hace un proceso del proyecto.
+# Sin esto, `nvim hannah-backend/sidecar/tts/main.py` o `tail -f .../sidecar/asr/log` entraban
+# en la matanza — o sea, el editor del usuario con cambios sin guardar.
+argv0_in_project() {
+  local pid="$1" a0 cwd
+  a0="$(tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | head -1)"
+  [ -n "$a0" ] || return 1
+  case "$a0" in
+    /*) : ;;
+    *) cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" || return 1; a0="$cwd/$a0" ;;
+  esac
+  # Chromium REESCRIBE su argv: /proc/pid/cmdline llega como una sola cadena con espacios
+  # ("/ruta/electron --no-sandbox ..."), así que si no es ejecutable tal cual, se prueba con
+  # la primera palabra. Sin esto, la app no entraba en el apagado y sobrevivía al stop.
+  [ -x "$a0" ] || a0="${a0%% *}"
+  # tiene que existir de verdad: si no, un shell con cwd dentro del repo pasaría el filtro
+  [ -x "$a0" ] || return 1
+  case "$a0" in "$ROOT"/*) return 0 ;; *) return 1 ;; esac
+}
+
+# Para los servicios que escuchan un puerto nuestro alcanza con que CORRAN desde el repo
+# (node y python del sistema tienen su binario fuera). Se mira cwd o argv[0]; ya no vale que
+# la ruta aparezca en cualquier parte de la línea de comandos.
 belongs_to_project() {
-  local pid="$1" cwd cmd
+  local pid="$1" cwd
   cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)"
-  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)"
-  case "$cwd" in "$ROOT"*) return 0 ;; esac
-  case "$cmd" in *"$ROOT"*) return 0 ;; esac
-  return 1
+  case "$cwd" in "$ROOT"|"$ROOT"/*) return 0 ;; esac
+  argv0_in_project "$pid"
 }
 
 # Mata un proceso y SUS DESCENDIENTES (nunca el grupo, ver is_safe_target).
@@ -138,7 +159,7 @@ stop_ollama() {
     if [ -n "$DRY" ]; then echo "  ollama: descargaría $m"; hecho=1; continue; fi
     ollama stop "$m" >/dev/null 2>&1 && { echo "  ollama: modelo $m descargado de la VRAM"; hecho=1; }
   done
-  mine="$(pgrep -x -u "$(id -u)" ollama 2>/dev/null | head -1)"
+  mine="$(pgrep -u "$(id -u)" -f '^([^ ]*/)?ollama serve' 2>/dev/null | head -1)"
   if [ -n "$mine" ]; then
     [ -z "$DRY" ] && kill_tree "$mine"
     echo "  ollama: servidor propio detenido (pid $mine)"; hecho=1
@@ -162,7 +183,11 @@ stop_all() {
   done
   if [ -n "$DRY" ]; then echo "Hannah — SIMULACRO (no se mata nada):"; else echo "Hannah — apagando:"; fi
   # 1) la app de escritorio (por su ruta, para no tocar otras apps Electron del sistema)
-  for pid in $(pgrep -f "hannah-desktop/node_modules/electron" 2>/dev/null); do
+  # Anclado a la ruta REAL de esta copia y limitado a procesos propios: el patrón suelto
+  # "hannah-desktop/node_modules/electron" llegó a coincidir con un shell que solo mencionaba
+  # esa cadena en sus argumentos.
+  for pid in $(pgrep -u "$(id -u)" -f "$DESK/node_modules/electron" 2>/dev/null); do
+    argv0_in_project "$pid" || continue
     kill_tree "$pid" && { echo "  ventana (pid $pid)"; n=$((n+1)); }
   done
   # 2) servicios, por el puerto en el que escuchan
@@ -176,7 +201,8 @@ stop_all() {
     kill_tree "$pid" && { echo "  ${s##*:} (pid $pid)"; n=$((n+1)); }
   done
   # 3) sidecars huérfanos: ya no escuchan ningún puerto pero siguen reteniendo VRAM
-  for pid in $(pgrep -f "$ROOT/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
+  for pid in $(pgrep -u "$(id -u)" -f "$ROOT/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
+    argv0_in_project "$pid" || continue     # el ejecutable tiene que ser del repo
     kill_tree "$pid" && { echo "  sidecar huérfano (pid $pid)"; n=$((n+1)); }
   done
   # 4) Ollama y sus modelos cargados (es el que más VRAM retiene)
@@ -202,7 +228,16 @@ stop_all() {
     has nvidia-smi && echo "  VRAM en uso: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
   fi
 }
-[ "${1:-}" = "stop" ] && { shift; stop_all "$@"; exit 0; }
+# El candado evita dos cosas: pisar un `./hannah` que está levantando servicios, y que el
+# apagado se anide (al matar Electron, éste dispara SU propio `hannah stop`, que sin flags
+# ignoraría un --keep-ollama del apagado externo).
+[ "${1:-}" = "stop" ] && {
+  shift
+  exec 9>"$ROOT/.hannah.lock"
+  flock -n 9 || { echo "Hannah: hay otro arranque o apagado en curso; no hago nada."; exit 0; }
+  stop_all "$@"
+  exit 0
+}
 
 hannah_addr() {
   has hyprctl && hyprctl clients -j 2>/dev/null | python3 -c \
@@ -257,8 +292,11 @@ exec 9>"$ROOT/.hannah.lock"; flock -n 9 || { echo "[hannah] ya lanzándose" >>"$
 # Si ya está abierta (Hyprland), re-enfocar y salir.
 # En modo app NO se re-coloca: la app es un widget que recuerda dónde la dejaste, y
 # place_window la estiraría a pantalla completa (que es lo que quiere el modo navegador).
+# OJO con la condición: no alcanza con que la VENTANA exista. Si los servicios están caídos
+# (p.ej. tras un `hannah stop` que no alcanzó a cerrar la app), salir acá dejaba a Hannah
+# abierta pero muda, y Super+H no volvía a levantar nada.
 EXIST="$(hannah_addr)"
-if [ -n "$EXIST" ]; then
+if [ -n "$EXIST" ] && up 3001 && up 5173; then
   [ "$MODE" = browser ] && place_window "$EXIST"
   has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
   exit 0
