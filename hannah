@@ -81,6 +81,10 @@ doctor() {
 # de una corrida vieja ocupando 2.4GB de VRAM sin que nada lo registrara.
 SERVICES="3001:backend 5173:vite 8001:asr 8002:tts 8003:vision 8004:emage 8005:motion"
 
+# $ROOT entra en un ERE de pgrep: si la ruta de instalación tiene ( ) + . etc., el patrón se
+# corrompe y el apagado deja de encontrar nada, en silencio.
+ROOT_RE="$(printf '%s' "$ROOT" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+
 port_pid() { ss -ltnp 2>/dev/null | grep ":$1 " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1; }
 
 DRY=""   # con --dry-run solo se lista lo que se mataría
@@ -161,8 +165,9 @@ stop_ollama() {
   done
   mine="$(pgrep -u "$(id -u)" -f '^([^ ]*/)?ollama serve' 2>/dev/null | head -1)"
   if [ -n "$mine" ]; then
-    [ -z "$DRY" ] && kill_tree "$mine"
-    echo "  ollama: servidor propio detenido (pid $mine)"; hecho=1
+    if [ -n "$DRY" ]; then echo "  ollama: detendría el servidor propio (pid $mine)"
+    else kill_tree "$mine"; echo "  ollama: servidor propio detenido (pid $mine)"; fi
+    hecho=1
   elif pgrep -x ollama >/dev/null 2>&1; then
     if systemctl is-active --quiet ollama 2>/dev/null; then
       echo "  ollama: el servicio es de systemd y corre como otro usuario, no puedo matarlo."
@@ -186,7 +191,7 @@ stop_all() {
   # Anclado a la ruta REAL de esta copia y limitado a procesos propios: el patrón suelto
   # "hannah-desktop/node_modules/electron" llegó a coincidir con un shell que solo mencionaba
   # esa cadena en sus argumentos.
-  for pid in $(pgrep -u "$(id -u)" -f "$DESK/node_modules/electron" 2>/dev/null); do
+  for pid in $(pgrep -u "$(id -u)" -f "$ROOT_RE/hannah-desktop/node_modules/electron" 2>/dev/null); do
     argv0_in_project "$pid" || continue
     kill_tree "$pid" && { echo "  ventana (pid $pid)"; n=$((n+1)); }
   done
@@ -201,7 +206,7 @@ stop_all() {
     kill_tree "$pid" && { echo "  ${s##*:} (pid $pid)"; n=$((n+1)); }
   done
   # 3) sidecars huérfanos: ya no escuchan ningún puerto pero siguen reteniendo VRAM
-  for pid in $(pgrep -u "$(id -u)" -f "$ROOT/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
+  for pid in $(pgrep -u "$(id -u)" -f "$ROOT_RE/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
     argv0_in_project "$pid" || continue     # el ejecutable tiene que ser del repo
     kill_tree "$pid" && { echo "  sidecar huérfano (pid $pid)"; n=$((n+1)); }
   done
@@ -219,12 +224,14 @@ stop_all() {
     if [ -n "$quedan" ]; then echo "  ⚠️  siguen arriba:$quedan"; else echo "  servicios: todos abajo ✓"; fi
     # `ollama stop` vuelve ANTES de que llama-server suelte la memoria: hay que esperar a que
     # se descargue de verdad, no mirar al instante (si no, se reporta un falso "sigue cargado").
-    for _ in $(seq 1 15); do
-      mods="$(ollama ps 2>/dev/null | awk 'NR>1' | wc -l)"
-      [ "${mods:-0}" -eq 0 ] 2>/dev/null && break
-      sleep 1
-    done
-    [ "${mods:-0}" -gt 0 ] 2>/dev/null && echo "  ⚠️  Ollama todavía tiene $mods modelo(s) en VRAM"
+    if [ -z "$keep_ollama" ]; then
+      for _ in $(seq 1 15); do
+        mods="$(ollama ps 2>/dev/null | awk 'NR>1' | wc -l)"
+        [ "${mods:-0}" -eq 0 ] 2>/dev/null && break
+        sleep 1
+      done
+      [ "${mods:-0}" -gt 0 ] 2>/dev/null && echo "  ⚠️  Ollama todavía tiene $mods modelo(s) en VRAM"
+    fi
     has nvidia-smi && echo "  VRAM en uso: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
   fi
 }
@@ -234,7 +241,8 @@ stop_all() {
 [ "${1:-}" = "stop" ] && {
   shift
   exec 9>"$ROOT/.hannah.lock"
-  flock -n 9 || { echo "Hannah: hay otro arranque o apagado en curso; no hago nada."; exit 0; }
+  # exit 1 a propósito: "me negué" tiene que poder distinguirse de "no había nada corriendo".
+  flock -n 9 || { echo "Hannah: hay otro arranque o apagado en curso; no hago nada." >&2; exit 1; }
   stop_all "$@"
   exit 0
 }
@@ -288,29 +296,32 @@ fi
 
 # Instancia única.
 exec 9>"$ROOT/.hannah.lock"; flock -n 9 || { echo "[hannah] ya lanzándose" >>"$LOG"; exit 0; }
+trap 'flock -u 9 2>/dev/null' EXIT   # salir por cualquier vía suelta el candado
 
 # Si ya está abierta (Hyprland), re-enfocar y salir.
 # En modo app NO se re-coloca: la app es un widget que recuerda dónde la dejaste, y
 # place_window la estiraría a pantalla completa (que es lo que quiere el modo navegador).
 # OJO con la condición: no alcanza con que la VENTANA exista. Si los servicios están caídos
 # (p.ej. tras un `hannah stop` que no alcanzó a cerrar la app), salir acá dejaba a Hannah
-# abierta pero muda, y Super+H no volvía a levantar nada.
+# abierta pero muda, y Super+H no volvía a levantar nada. Se comprueban los que de verdad
+# hacen falta para que hable: backend, Vite (y que hable HTTP, no HTTPS) y el TTS.
 EXIST="$(hannah_addr)"
-if [ -n "$EXIST" ] && up 3001 && up 5173; then
+if [ -n "$EXIST" ] && up 3001 && up 5173 && up 8002 && vite_http_ok; then
   [ "$MODE" = browser ] && place_window "$EXIST"
   has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
   exit 0
 fi
 
 # ── Servicios (idempotente) ──────────────────────────────────────────────
-# Nota: los hijos backgrounded cierran el fd 9 (9>&-) para NO heredar el candado; si lo
-# heredaran, el lock quedaría tomado mientras vivan (vite/backend/etc.) y Super+H nunca
-# podría reabrir ("ya lanzándose" eterno).
-has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 9>&- & }
-up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 9>&- & )
-up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 9>&- & )
-up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 9>&- & )
-up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 9>&- & )
+# Nota: el `9>&-` va en el GRUPO ( ... ) 9>&-, no en el comando de adentro. Puesto adentro
+# solo cerraba el fd del proceso final: la subshell intermedia seguía sosteniendo el candado
+# mientras viviera el servicio. Con el `stop` tomando el mismo candado eso era fatal —dejaba el
+# apagado como no-op silencioso—, así que además hay un trap que lo suelta pase lo que pase.
+has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 & } 9>&-
+up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & ) 9>&-
+up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & ) 9>&-
+up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
+up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
 if up 5173; then
   # Puerto ocupado: puede ser un Vite en HTTPS (npm run dev a mano) -> el overlay no carga.
   vite_http_ok || {
@@ -321,7 +332,7 @@ if up 5173; then
     exit 1
   }
 else
-  ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 9>&- & )
+  ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
 fi
 
 # Sección crítica terminada (servicios ya arrancando): SOLTAR el candado antes de las esperas
@@ -329,7 +340,15 @@ fi
 # bloquea todos los Super+H siguientes con "ya lanzándose".
 flock -u 9 2>/dev/null
 
-for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && break; sleep 1; done
+# Si el frontend no llegó a levantar, abrir la ventana igual solo produce un overlay vacío
+# indistinguible de "la app no arranca". Mejor decirlo y salir.
+READY=""
+for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sleep 1; done
+if [ -z "$READY" ]; then
+  echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
+  echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en hannah-frontend?)." >&2
+  exit 1
+fi
 
 # ── Navegador en modo-app ────────────────────────────────────────────────
 open_browser() {
@@ -358,7 +377,7 @@ if [ "$MODE" = app ]; then
   # escritorios) y tiene instancia única: si ya estaba abierta, este arranque solo la enfoca.
   # Por eso acá no hay que buscar la ventana ni colocarla.
   echo "[hannah] abriendo la app de escritorio" >>"$LOG"
-  ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start >>"$LOG" 2>&1 9>&- & )
+  ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start >>"$LOG" 2>&1 & ) 9>&-
 else
   open_browser
   # ── Colocar la ventana encima ─────────────────────────────────────────────
