@@ -22,15 +22,78 @@ up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # 60s a una URL http que nunca responde. Esto lo detecta y lo dice.
 vite_http_ok() { curl -sf -o /dev/null -m 2 "http://localhost:5173/" 2>/dev/null; }
 has() { command -v "$1" >/dev/null 2>&1; }
+
+# ── `hannah doctor` — diagnóstico del entorno ─────────────────────────────────
+# Dice si el overlay va a poder flotar acá y, si no, qué falta. Es lo primero que conviene
+# correr en una máquina nueva: antes esto fallaba en silencio (ventana normal, sin explicar).
+doctor() {
+  local de="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-desconocido}}"
+  local sess="${XDG_SESSION_TYPE:-desconocido}"
+  echo "Hannah — diagnóstico del entorno"
+  echo "  escritorio : $de"
+  echo "  sesión     : $sess$([ -n "${WAYLAND_DISPLAY:-}" ] && echo ' (Wayland)')$([ -n "${DISPLAY:-}" ] && echo " · X disponible en \$DISPLAY=$DISPLAY")"
+  printf '  herramientas:'
+  for t in hyprctl kdotool wmctrl xdotool swaymsg; do has "$t" && printf ' %s' "$t"; done
+  echo
+  printf '  servicios  :'
+  for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 11434:ollama; do
+    up "${p%%:*}" && printf ' %s✓' "${p##*:}" || printf ' %s✗' "${p##*:}"
+  done
+  echo; echo
+
+  local dl; dl=$(printf '%s' "$de" | tr '[:upper:]' '[:lower:]')
+  if has hyprctl && [[ "$dl" == *hyprland* ]]; then
+    echo "  ✅ Overlay COMPLETO (Hyprland): flota, se fija encima y se mueve entre monitores."
+    echo "     Usá:  ./hannah   (o Super+H)"
+  elif has kdotool && [[ "$dl" == *kde* || "$dl" == *plasma* ]]; then
+    echo "  ✅ Overlay COMPLETO (KDE vía kdotool)."
+    echo "     Recomendado: la app de escritorio (hannah-desktop)."
+  elif [ -n "${DISPLAY:-}" ] && { has wmctrl || has xdotool; }; then
+    echo "  ✅ Overlay COMPLETO (X11/XWayland con $(has wmctrl && echo wmctrl || echo xdotool))."
+    [ -n "${WAYLAND_DISPLAY:-}" ] && echo "     Sesión Wayland: la ventana corre bajo XWayland, por eso funciona."
+    echo "     Recomendado: la app de escritorio (hannah-desktop), que fuerza XWayland."
+  elif [ -n "${DISPLAY:-}" ]; then
+    echo "  🟡 Overlay PARCIAL: la app de escritorio flota sola (XWayland), pero falta una"
+    echo "     herramienta para moverla/fijarla por voz."
+    echo "     Instalá:  wmctrl   (Debian/Ubuntu: sudo apt install wmctrl · Arch: sudo pacman -S wmctrl"
+    echo "               Fedora: sudo dnf install wmctrl)"
+    [[ "$dl" == *kde* || "$dl" == *plasma* ]] && echo "     En KDE, aún mejor: kdotool."
+  else
+    echo "  ⚠️  Sin vía de control de ventanas (Wayland nativo sin XWayland)."
+    echo "     Usá la app de escritorio (hannah-desktop): fuerza XWayland y flota igual."
+    [[ "$dl" == *gnome* ]] && echo "     Nota: GNOME en Wayland nativo no deja que las apps se pongan encima (es su diseño)."
+  fi
+  echo
+  echo "  Documentación: SETUP.md"
+}
+[ "${1:-}" = "doctor" ] && { doctor; exit 0; }
+
 hannah_addr() {
   has hyprctl && hyprctl clients -j 2>/dev/null | python3 -c \
     "import sys,json;print(next((w['address'] for w in json.load(sys.stdin) if (w.get('title') or '').startswith('Hannah')),''))"
 }
 
+# Fallback para escritorios sin hyprctl (GNOME, KDE, XFCE, Cinnamon…): fija la ventana
+# encima con las herramientas X11 estándar. Funciona en X11 y también en sesiones Wayland
+# (la ventana del navegador/app corre bajo XWayland).
+place_window_generic() {
+  if has wmctrl; then
+    wmctrl -r 'Hannah' -b add,above,sticky,skip_taskbar,skip_pager >/dev/null 2>&1
+    wmctrl -r 'Hannah' -t -1 >/dev/null 2>&1     # en todos los escritorios
+    echo "[hannah] ventana fijada encima con wmctrl" >>"$LOG"; return 0
+  fi
+  if has kdotool; then
+    local id; id="$(kdotool search --name '^Hannah' 2>/dev/null | tail -1)"
+    [ -n "$id" ] && { kdotool windowstate --add above "$id" >/dev/null 2>&1; echo "[hannah] fijada con kdotool" >>"$LOG"; return 0; }
+  fi
+  echo "[hannah] sin herramienta para fijar la ventana encima (probá: ./hannah doctor)" >>"$LOG"
+  return 1
+}
+
 # Coloca la ventana flotante a pantalla completa en el monitor destino (Hyprland).
 # Monitor = $MONITOR si se fijó, si no el ENFOCADO (autodetección, sin hardcode).
 place_window() {
-  local addr="$1"; has hyprctl || return 0
+  local addr="$1"; has hyprctl || { place_window_generic; return 0; }
   local geo
   geo="$(hyprctl monitors -j | python3 -c "
 import sys,json
@@ -106,8 +169,16 @@ open_browser() {
 }
 open_browser
 
-# ── Colocar la ventana (Hyprland; en otros entornos, no-op) ───────────────
-ADDR=""
-for _ in $(seq 1 40); do ADDR="$(hannah_addr)"; [ -n "$ADDR" ] && break; sleep 1; done
-[ -n "$ADDR" ] && place_window "$ADDR"
+# ── Colocar la ventana encima ─────────────────────────────────────────────
+if has hyprctl; then
+  ADDR=""
+  for _ in $(seq 1 40); do ADDR="$(hannah_addr)"; [ -n "$ADDR" ] && break; sleep 1; done
+  [ -n "$ADDR" ] && place_window "$ADDR"
+else
+  # Otros escritorios: no hay forma de esperar la ventana por dirección, así que damos unos
+  # segundos a que abra y fijamos por título. (Antes se giraba 40s en vano y se rendía.)
+  sleep 4
+  place_window_generic \
+    || echo "[hannah] tip: la app de escritorio (hannah-desktop) flota sin depender de esto" >>"$LOG"
+fi
 echo "[hannah] listo" >>"$LOG"

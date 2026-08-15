@@ -196,21 +196,58 @@ Después, en la interfaz: decile algo. Deberías tener **respuesta escrita + voz
 
 ---
 
-## 8. Qué esperar del overlay según tu escritorio
+## 8. El overlay flotante en tu escritorio
 
-Hannah funciona en cualquier lado; lo que cambia es si **flota fijada encima**:
+**Empezá por acá:**
 
-| Escritorio | Overlay |
-|---|---|
-| **Hyprland** (Wayland) | ✅ completo: flota, se fija, se mueve entre monitores |
-| **X11 / XWayland** | ✅ vía `xdotool` + `wmctrl` (instalalos) — *poco probado* |
-| **KDE / GNOME (Wayland)** | ⚠️ degrada a **ventana normal**: Hannah anda, pero no flota ni se fija |
-| **Windows / macOS** | usá la app Electron (`hannah-desktop`) |
+```bash
+./hannah doctor      # dice si tu entorno soporta el overlay, y qué falta
+```
 
-Para Hyprland/X11 el launcher detecta solo el entorno. Si tu escritorio no está soportado,
-simplemente abrí `http://localhost:5173` como una web más.
+Hannah puede flotar **encima de todo** en cualquier escritorio, pero la vía cambia:
 
----
+| Escritorio / sesión | Cómo flota | Qué necesitás |
+|---|---|---|
+| **Hyprland** | nativo (`hyprctl`) | nada |
+| **KDE Plasma** (Wayland o X11) | KWin | `kdotool` (recomendado) o `wmctrl` |
+| **GNOME, XFCE, Cinnamon, MATE, i3** (X11) | EWMH estándar | `wmctrl` |
+| **GNOME/KDE en Wayland** | vía **XWayland** | usar la **app de escritorio** (fuerza XWayland) |
+| **Windows / macOS** | nativo de Electron | nada |
+
+> **Por qué XWayland:** en Wayland *nativo* el protocolo **prohíbe** que una app se ponga
+> encima o se mueva sola (es decisión de diseño de Wayland, no un bug). Por eso la app de
+> escritorio arranca forzada a XWayland (`ozone-platform=x11`), donde la ventana es X11 real
+> y todos los compositores respetan el "siempre encima". Si querés experimentar con Wayland
+> nativo: `HANNAH_OZONE=wayland` — pero perdés flotar y mover entre monitores.
+
+**La forma más portable** es la app de escritorio, que ya trae todo resuelto:
+
+```bash
+cd hannah-frontend && npm run build          # genera el dist que empaqueta la app
+cd ../hannah-desktop && npm install && npm start
+```
+
+Instalá además `wmctrl` (o `kdotool` en KDE) para que Hannah pueda **moverse por voz**
+("andá al centro", "pasate a la otra pantalla"):
+
+```bash
+sudo pacman -S wmctrl        # Arch/CachyOS
+sudo apt install wmctrl      # Debian/Ubuntu
+sudo dnf install wmctrl      # Fedora
+```
+
+**Si tu escritorio no aparece flotando:** corré `./hannah doctor`, que te dice exactamente
+qué falta. Y si estás en GNOME Wayland y aun con la app no flota, reportalo con la salida de
+`wmctrl -l` y `xprop -name Hannah _NET_WM_STATE` (ver checklist abajo).
+
+### Checklist para verificar en tu máquina (si no es Hyprland)
+
+```bash
+./hannah doctor                              # 1. veredicto del entorno
+wmctrl -l | grep -i hannah                   # 2. ¿la ventana es visible para X11?
+xprop -name Hannah _NET_WM_STATE             # 3. ¿aparece _NET_WM_STATE_ABOVE?
+```
+Abrí otra ventana maximizada encima: Hannah debería quedar visible por delante.
 
 ## 9. Seguridad — leé esto antes de activar la terminal
 

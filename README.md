@@ -109,12 +109,19 @@ npm run build:mac     # .dmg  — requiere macOS (imposible desde Linux)
 
 ## Matriz de plataformas (overlay)
 
-| Plataforma | Modo navegador (`hannah`) | App Electron |
-|-----------|---------------------------|--------------|
-| Linux Hyprland (Wayland) | ✅ float+pin vía hyprctl | ✅ (necesita float+pin de Hyprland, tiling) |
-| Linux X11 / XWayland | ✅ xdotool/wmctrl | ✅ always-on-top nativo |
-| Linux GNOME/KDE Wayland | ⚠️ degrada a ventana | ⚠️ always-on-top limitado (usar XWayland) |
-| Windows / macOS | — | ✅ always-on-top nativo |
+Corré **`./hannah doctor`**: te dice si tu entorno soporta el overlay y qué falta.
+
+| Escritorio | Cómo flota | Requisito |
+|-----------|------------|-----------|
+| Hyprland | nativo (`hyprctl`) | — |
+| KDE Plasma (Wayland/X11) | KWin | `kdotool` o `wmctrl` |
+| GNOME · XFCE · Cinnamon · MATE · i3 (X11) | EWMH | `wmctrl` |
+| GNOME/KDE en Wayland | vía XWayland | usar la app de escritorio |
+| Windows · macOS | nativo de Electron | — |
+
+> En **Wayland nativo** el protocolo prohíbe que una app se ponga encima o se mueva sola (es
+> su diseño). Por eso la app de escritorio fuerza **XWayland**, y así el mismo código flota en
+> todos los escritorios. Detalle en `SETUP.md`.
 
 ## Notas
 
