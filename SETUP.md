@@ -282,5 +282,15 @@ exista (`ollama list`).
 **El micrófono no funciona en la LAN** → el navegador exige HTTPS fuera de localhost; usá
 `https://<ip>:5173` (no `http://`) y aceptá el certificado.
 
+**La app de escritorio no arranca: `Error: spawn .../electron/dist/electron ENOENT`** (fijate
+si la ruta del error termina en `\n`) → el archivo `node_modules/electron/path.txt` quedó con
+un salto de línea y Electron lo lee sin recortarlo. Pasa cuando el binario se instaló a mano
+(postinstall bloqueado). Se arregla con:
+```bash
+cd hannah-desktop && printf 'electron' > node_modules/electron/path.txt
+```
+Si además falta el binario (`dist/electron` no existe), reinstalá permitiendo el postinstall:
+`npm rebuild electron` o `npm install electron --force`.
+
 **Todo va lento** → revisá si los sidecars están en CPU: `curl -s localhost:8002/health` dice
 el provider. Sin CUDA, el TTS es el cuello de botella.
