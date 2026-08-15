@@ -249,6 +249,25 @@ xprop -name Hannah _NET_WM_STATE             # 3. ¿aparece _NET_WM_STATE_ABOVE?
 ```
 Abrí otra ventana maximizada encima: Hannah debería quedar visible por delante.
 
+## 8b. Apagar Hannah (y recuperar la VRAM)
+
+Los sidecars y los modelos cargados **retienen memoria de la GPU mientras viven** — en una sesión
+típica son unos 14GB. Por eso:
+
+```bash
+./hannah stop               # apaga app, backend, sidecars, Vite y descarga los modelos de Ollama
+./hannah stop --dry-run     # muestra qué mataría, sin tocar nada
+./hannah stop --keep-ollama # deja los modelos calientes (arranca más rápido la próxima)
+```
+
+**Cerrar la ventana del overlay hace lo mismo automáticamente** si la abriste con `./hannah`. Si
+la arrancaste a mano (`npm run start:dev`), cerrarla NO apaga nada — así no te lleva por delante
+servicios que estabas usando para probar.
+
+Si Ollama corre como servicio de systemd (lo normal en Arch/CachyOS), el script **no puede** bajar
+el servicio porque corre como otro usuario: descarga los modelos de la VRAM, que es lo que ocupa
+lugar, y te dice el comando por si querés bajarlo entero (`sudo systemctl stop ollama`).
+
 ## 9. Seguridad — leé esto antes de activar la terminal
 
 `TOOLS_SYSTEM_CONTROL=true` le da a Hannah una **shell real** en tu máquina (la misma que usa

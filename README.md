@@ -68,12 +68,29 @@ cd ../hannah-frontend && npm install --legacy-peer-deps   # ojo: sin el flag fal
 
 # 2) levanta todo (Ollama, sidecars, backend, Vite) y abre el overlay:
 ./hannah                       # abre la app Electron; si ya está abierta, la enfoca
+./hannah stop                  # apaga TODO y libera la VRAM (modelos de Ollama incluidos)
+./hannah doctor                # diagnostica si el overlay va a flotar acá, y qué falta
 HANNAH_MODE=browser ./hannah   # alternativa liviana: el frontend en un navegador
 
 # 2') o la app de escritorio sola (Win/Mac/Linux), con el backend ya corriendo:
 cd hannah-desktop && npm install && npm run start:dev   # usa el Vite de :5173
 cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # sin Vite, desde dist/
 ```
+
+> **Cerrar la ventana apaga todo.** Los sidecars y los modelos cargados retienen VRAM mientras
+> viven (~14GB en una sesión típica), así que al cerrar el overlay lanzado por `./hannah` se
+> apaga el stack entero y se descargan los modelos de Ollama. Si preferís conservarlos calientes:
+> `./hannah stop --keep-ollama`, o `--dry-run` para ver qué se apagaría sin tocar nada.
+
+## Documentación por repo
+
+| Dónde | Qué encontrás |
+|---|---|
+| `hannah-backend/README.md` | Contratos WS y REST, el recorrido de un turno, la capa determinista de acciones, configuración y decisiones de diseño |
+| `hannah-desktop/README.md` | Por qué XWayland, por qué los flags van en argv, la geometría vía compositor y el comportamiento de la ventana |
+| `hannah-frontend/README.md` | Avatar VRM, retarget desde geometría, estado y captura de audio |
+| `SETUP.md` | Levantar todo en una máquina nueva, paso a paso |
+| `SKILLS.md` | Enseñarle capacidades sin tocar código |
 
 ## Tools (internet + terminal)
 
