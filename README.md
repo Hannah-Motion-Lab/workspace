@@ -26,6 +26,27 @@ Whisper, Kokoro, YOLO/VLM). Además puede **usar internet** y **una terminal rea
   2. **App Electron** (`hannah-desktop`): Chromium, overlay con APIs cross-platform
      (`setAlwaysOnTop`, `setBounds`, `getCursorScreenPoint`, `getAllDisplays`). **Win/Mac/Linux**.
 
+## Puertos y red
+
+| Servicio | Puerto | |
+|---|---|---|
+| Backend (API + WS) | 3001 | escucha en **127.0.0.1** (env `HOST`) |
+| Frontend (Vite) | 5173 | escucha en `0.0.0.0` — por acá entra el celular |
+| ASR · TTS · Visión | 8001 · 8002 · 8003 | sidecars locales |
+| Motion (lab, default) | 8005 | `hannah-motion-lab` · EMAGE en 8004 (fallback) |
+| Ollama | 11434 | LLM + embeddings |
+
+> **Acceso desde el celular/otra compu:** entrás a `https://<ip-de-tu-pc>:5173` y Vite hace de
+> proxy hacia el backend local. El backend **no** queda expuesto a la red (ni la terminal, ni
+> tus API keys, ni la memoria). Solo poné `HOST=0.0.0.0` si sabés lo que hacés.
+
+**Idioma:** hoy Hannah **habla inglés** (el protocolo del LLM lo fuerza, en `config.js`); el ASR
+detecta idioma solo, así que le podés hablar en español. Se cambia editando `llm.protocol` y la
+voz (`ELEVENLABS_VOICE_ID`: `af_*`/`am_*` inglés, `ef_*`/`em_*` español…).
+
+**Memoria:** además del historial de sesión, guarda memoria de largo plazo en SQLite
+(`hannah-backend/data/memory.db`) con resumen rodante y recall vectorial.
+
 ## Requisitos
 
 > **Objetivo de VRAM: ≤16GB** — todo el stack (LLM + embeddings + TTS + ASR + visión +
@@ -42,8 +63,8 @@ Whisper, Kokoro, YOLO/VLM). Además puede **usar internet** y **una terminal rea
 
 ```bash
 # 1) instalar (una vez)
-cd hannah-backend && npm install
-cd ../hannah-frontend && npm install
+cd hannah-backend  && npm install && cp .env.example .env
+cd ../hannah-frontend && npm install --legacy-peer-deps   # ojo: sin el flag falla (vite 5 vs plugin-basic-ssl)
 
 # 2) modo navegador (Linux) — levanta todo y abre el overlay:
 ./hannah
@@ -55,26 +76,34 @@ cd ../hannah-desktop && npm install && npm start
 
 ## Tools (internet + terminal)
 
-Están **OFF por defecto** (un modelo flojo con tools ensucia el chat). Actívalos:
+Están **OFF por defecto**. Se activan en tu `.env` (no como variables sueltas):
 
 ```bash
-TOOLS_ENABLED=true TOOLS_SYSTEM_CONTROL=true LLM_MODEL=qwen2.5:7b   # (o pon qwen2.5 en el ⚙)
+# hannah-backend/.env
+TOOLS_ENABLED=true          # acciones (internet, abrir/cerrar, comandos)
+TOOLS_SYSTEM_CONTROL=true   # master flag de la TERMINAL real (pty) — implica acceso shell
 ```
 
 - **Internet**: `web_search` (DuckDuckGo) y `fetch_url` (leer webs).
-- **Terminal**: shell persistente real (`node-pty`, soporta ssh/interactivos) + panel
-  `⌨` en la UI. Corre libre; **solo pide confirmación para comandos destructivos**
-  (`rm -rf`, `dd`, `mkfs`, `sudo rm`…). `TOOLS_SYSTEM_CONTROL` es el master flag (OFF por
-  defecto).
+- **Terminal**: shell persistente real (`node-pty`, soporta ssh/interactivos) + panel `⌨`
+  en la UI. **No hay allowlist de comandos**: con el flag activo corre cualquier cosa; la
+  única red es la **confirmación para destructivos** (`rm`, `dd`, `mkfs`, `shutdown`,
+  `git --force`…, regex `DANGER`, best-effort). `TOOLS_SYSTEM_CONTROL` gatea por igual
+  `run_command`, las skills de tipo `terminal` y el panel.
+- **Skills y referencia**: podés enseñarle capacidades sin tocar código —
+  `hannah-backend/skills/<nombre>/SKILL.md` (acción `run`/`terminal`/`open`/`search`, con
+  variantes por SO) y `reference/*.md` (cheat-sheets que guían al modelo). Ver `SKILLS.md`.
 
 ## Distribuir (builds por OS)
 
 ```bash
 cd hannah-desktop
 npm run build:linux   # .AppImage / .deb   (probado: Hannah-*.AppImage corre self-contained)
-npm run build:win     # .exe  (correr en Windows o CI)
-npm run build:mac     # .dmg  (correr en macOS o CI)
+npm run build:win     # .exe  — requiere Windows o Wine (NO sale desde Linux pelado)
+npm run build:mac     # .dmg  — requiere macOS (imposible desde Linux)
 ```
+> Antes de empaquetar: `cd hannah-frontend && npm run build` (el Electron carga ese `dist/`).
+> Para los tres SO a la vez, lo práctico es CI (GitHub Actions con runners nativos).
 > La app Electron es el **overlay**; sigue necesitando el **backend + Ollama + sidecars**
 > corriendo (local). Empaquetar el backend como servicio es trabajo futuro.
 
