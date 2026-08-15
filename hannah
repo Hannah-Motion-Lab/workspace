@@ -17,6 +17,10 @@ MONITOR="${HANNAH_MONITOR:-}"                            # vacío = autodetectar
 URL="http://localhost:5173/?overlay=1"
 
 up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
+# El overlay necesita Vite en HTTP (HANNAH_HTTP=1). Si hay un Vite en 5173 pero en HTTPS
+# (p.ej. `npm run dev` a mano), el puerto figura ocupado y antes nos quedábamos esperando
+# 60s a una URL http que nunca responde. Esto lo detecta y lo dice.
+vite_http_ok() { curl -sf -o /dev/null -m 2 "http://localhost:5173/" 2>/dev/null; }
 has() { command -v "$1" >/dev/null 2>&1; }
 hannah_addr() {
   has hyprctl && hyprctl clients -j 2>/dev/null | python3 -c \
@@ -58,7 +62,23 @@ up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 9>&- & )
 up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 9>&- & )
 up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 9>&- & )
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 9>&- & )
-up 5173 || ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 9>&- & )
+if up 5173; then
+  # Puerto ocupado: puede ser un Vite en HTTPS (npm run dev a mano) -> el overlay no carga.
+  vite_http_ok || {
+    echo "[hannah] AVISO: hay algo en :5173 que no responde HTTP (¿vite en https?)." >>"$LOG"
+    echo "[hannah] El overlay necesita HANNAH_HTTP=1. Cerralo y volvé a lanzar Super+H." >>"$LOG"
+    echo "Hay un Vite en :5173 que NO habla HTTP (probablemente 'npm run dev' en https)." >&2
+    echo "Cerralo (pkill -f 'bin/vite') y volvé a apretar Super+H." >&2
+    exit 1
+  }
+else
+  ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 9>&- & )
+fi
+
+# Sección crítica terminada (servicios ya arrancando): SOLTAR el candado antes de las esperas
+# largas. Si no, un arranque lento (o un launcher que quede colgado esperando la ventana)
+# bloquea todos los Super+H siguientes con "ya lanzándose".
+flock -u 9 2>/dev/null
 
 for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && break; sleep 1; done
 
