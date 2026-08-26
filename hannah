@@ -346,7 +346,7 @@ trap 'flock -u 9 2>/dev/null' EXIT   # salir por cualquier vía suelta el candad
 # abierta pero muda, y Super+H no volvía a levantar nada. Se comprueban los que de verdad
 # hacen falta para que hable: backend, Vite (y que hable HTTP, no HTTPS) y el TTS.
 EXIST="$(hannah_addr)"
-if [ -n "$EXIST" ] && up 3001 && up 5173 && up 8002 && vite_http_ok; then
+if [ "$MODE" != services ] && [ -n "$EXIST" ] && up 3001 && up 5173 && up 8002 && vite_http_ok; then
   [ "$MODE" = browser ] && place_window "$EXIST"
   has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
   exit 0
@@ -374,13 +374,18 @@ fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
 if up 5173; then
   # Puerto ocupado: puede ser un Vite en HTTPS (npm run dev a mano) -> el overlay no carga.
-  vite_http_ok || {
+  # (En modo services da igual: HTTPS es justo lo que quiere otro equipo de la red.)
+  [ "$MODE" = services ] || vite_http_ok || {
     echo "[hannah] AVISO: hay algo en :5173 que no responde HTTP (¿vite en https?)." >>"$LOG"
     echo "[hannah] El overlay necesita HANNAH_HTTP=1. Cerralo y volvé a lanzar Super+H." >>"$LOG"
     echo "Hay un Vite en :5173 que NO habla HTTP (probablemente 'npm run dev' en https)." >&2
     echo "Cerralo (pkill -f 'bin/vite') y volvé a apretar Super+H." >&2
     exit 1
   }
+elif [ "$MODE" = services ]; then
+  # Sin ventana aquí: Vite en HTTPS para que mic y cámara funcionen desde otro equipo de la
+  # red (un origen que no es localhost necesita HTTPS para getUserMedia).
+  ( cd "$FRONT" && nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
 else
   ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
 fi
@@ -389,6 +394,19 @@ fi
 # largas. Si no, un arranque lento (o un launcher que quede colgado esperando la ventana)
 # bloquea todos los Super+H siguientes con "ya lanzándose".
 flock -u 9 2>/dev/null
+
+# HANNAH_MODE=services: levantar todo y NO abrir ventana; para verla desde otro equipo de la
+# red en el navegador (el avatar se dibuja con la GPU de ese equipo; el backend sigue solo en
+# 127.0.0.1 porque Vite le hace de proxy).
+if [ "$MODE" = services ]; then
+  for _ in $(seq 1 90); do up 3001 && up 5173 && up 8002 && break; sleep 1; done
+  ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  proto=https; vite_http_ok && proto=http
+  echo "Hannah lista, sin ventana. Desde otro equipo de la red: ${proto}://${ip:-<ip-de-esta-maquina>}:5173  (acepta el certificado)."
+  echo "Parar todo: ./hannah stop"
+  exit 0
+fi
 
 # Si el frontend no llegó a levantar, abrir la ventana igual solo produce un overlay vacío
 # indistinguible de "la app no arranca". Mejor decirlo y salir.

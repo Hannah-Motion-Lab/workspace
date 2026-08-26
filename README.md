@@ -81,6 +81,7 @@ cd ../hannah-frontend && npm install --legacy-peer-deps   # careful: without the
 ./hannah stop                  # shuts EVERYTHING down and frees the VRAM (Ollama models included)
 ./hannah doctor                # diagnoses whether the overlay will float here, and what's missing
 HANNAH_MODE=browser ./hannah   # lightweight alternative: the frontend in a browser
+HANNAH_MODE=services ./hannah  # everything up, NO window: open https://<this-ip>:5173 from another device on the LAN
 
 # 2') or the desktop app alone (Win/Mac/Linux), with the backend already running:
 cd hannah-desktop && npm install && npm run start:dev   # uses the Vite on :5173
