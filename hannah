@@ -427,7 +427,11 @@ if [ "$MODE" = app ]; then
   # escritorios) y tiene instancia única: si ya estaba abierta, este arranque solo la enfoca.
   # Por eso acá no hay que buscar la ventana ni colocarla.
   echo "[hannah] abriendo la app de escritorio" >>"$LOG"
-  ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start >>"$LOG" 2>&1 & ) 9>&-
+  # HANNAH_ELECTRON_FLAGS: flags extra para Electron, p.ej. --disable-gpu para verla por ssh -X
+  # (sin GPU remota Chromium usa SwiftShader: se ve, el 3D va lento). Ojo: la app tiene candado
+  # de instancia única, así que si ya hay una Hannah en el escritorio, `./hannah stop` antes.
+  # shellcheck disable=SC2086
+  ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start -- ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
 else
   open_browser
   # ── Colocar la ventana encima ─────────────────────────────────────────────
