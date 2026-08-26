@@ -110,7 +110,10 @@ eyes use, with one instruction: *relay this in one sentence, do not invent*. The
 the only truth about a task; Hannah is the only voice. Ask her "how is it going?" and she answers
 from the live status, not from memory. Say "yes" to an approval and it goes through — except
 `high`-risk actions, which require the button in the HUD (voice can be spoofed by anyone in the
-room).
+room). With the hands on, the model's own free-form commands go **through them** by default
+(`TOOLS_RUN_POLICY=agent-first`): skills and the deterministic layer stay local and instant, and
+anything else gets the agent's risk tiers and approvals instead of a 7B typing into a shell. The
+terminal panel echoes every command the hands run and a glimpse of its output.
 
 > **Privacy — this is the one exception to "everything is local".** The agent's default model is
 > **Claude Sonnet 5** (Anthropic); the `--openrouter` profile uses **GLM 5.3 Flash** (Z.ai) via
