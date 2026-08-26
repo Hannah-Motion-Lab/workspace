@@ -3,6 +3,7 @@ hannah-backend/
 hannah-frontend/
 hannah-motion-lab/
 hannah-desktop/
+hannah-agent/
 # venv del motion sidecar
 .venv/
 # artefactos locales
