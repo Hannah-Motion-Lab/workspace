@@ -186,4 +186,7 @@ Run **`./hannah doctor`**: it tells you whether your environment supports the ov
 - **No retargeting** of motion to foreign rigs ("zombie pose" lesson): the VRoid avatar
   uses a retarget computed from geometry. See CLAUDE.md.
 - Privacy: audio in memory, never to disk; user content is never logged.
-- Asset licenses (SMPL-X non-commercial, Mixamo Adobe) — they stay gitignored.
+- **License: MIT** for the code in every Hannah repo (the agent is a fork of opencode, also MIT).
+  The assets are a different story and are NOT in git: SMPL-X (non-commercial research license)
+  and Mixamo clips (Adobe) are downloaded by each user under their own terms; the Kokoro voice
+  model and the Whisper/Ollama models come from their upstream releases.
