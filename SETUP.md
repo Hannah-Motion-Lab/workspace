@@ -148,6 +148,32 @@ The paths can be changed with the `VAE_CKPT` / `FLOW_CKPT` env vars.
 
 ---
 
+## 5b. The hands (optional): `hannah-agent`
+
+Skip this unless you want multi-step tasks ("organize my downloads by type"). Hannah talks and
+runs simple commands without it.
+
+```bash
+# 1) bun (the agent is TypeScript run by bun, not Node)
+sudo pacman -S unzip && curl -fsSL https://bun.sh/install | bash     # CachyOS/Arch; Debian: apt install unzip
+cd hannah-agent && bun install
+
+# 2) the model. Default profile: GLM 5.3 Flash (Z.ai) via OpenRouter — cheap, remote: READ THE
+#    PRIVACY NOTE in README. Key: https://openrouter.ai/keys — the account needs CREDITS.
+scripts/install-profile.sh --openrouter        # writes ~/.config/hannah-agent/
+#    alternatives: --local (Ollama, needs qwen3-coder:30b — does NOT fit next to the rest in 16GB)
+#                  (no flag) Anthropic, needs ANTHROPIC_API_KEY
+
+# 3) tell the backend, in hannah-backend/.env
+AGENT_ENABLED=true
+OPENROUTER_API_KEY=sk-or-...          # the AGENT reads it (the launcher passes it through)
+```
+
+Then `./hannah` starts it on `:8006` before the backend, and `./hannah stop` shuts it down.
+`./hannah doctor` tells you which of the three pieces (bun, profile, key) is missing. **Without a
+key (or credits) the agent starts but every task fails at the model** — Hannah will say the task failed; she
+will not pretend it worked.
+
 ## 6. Bringing it up
 
 **Option A — everything at once (Linux):**

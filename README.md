@@ -13,6 +13,7 @@ Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real termin
 | `hannah-frontend/` | React + three.js client: VRoid/VRM avatar, mic, camera, HUD, terminal panel. | React/Vite |
 | `hannah-motion-lab/` | text→motion model (gestures) served on :8005. | Python |
 | `hannah-desktop/` | **Electron desktop app** (universal overlay Win/Mac/Linux). | Electron |
+| `hannah-site/` | Landing page + Ollama-style installer (live on [GitHub Pages](https://hannah-motion-lab.github.io/site/)). | Static HTML |
 | `hannah` | **Launcher**: brings up the whole stack and opens the overlay (by default, the app). | Bash |
 
 ## Architecture in 30s
@@ -35,6 +36,7 @@ Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real termin
 | ASR · TTS · Vision | 8001 · 8002 · 8003 | local sidecars |
 | Motion (lab, default) | 8005 | `hannah-motion-lab` · EMAGE on 8004 (fallback) |
 | Ollama | 11434 | LLM + embeddings |
+| Agent (hannah-agent) | 8006 | **127.0.0.1** · the "hands", off by default (`AGENT_ENABLED`) |
 
 > **Access from your phone/another computer:** you go to `https://<your-pc-ip>:5173` and Vite acts
 > as a proxy to the local backend. The backend is **not** exposed to the network (neither the
@@ -90,6 +92,34 @@ cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # no 
 > `./hannah` shuts the whole stack down and unloads the Ollama models. If you'd rather keep them warm:
 > `./hannah stop --keep-ollama`, or `--dry-run` to see what would be shut down without touching anything.
 
+## The hands: `hannah-agent`
+
+Hannah has two ways to act on the computer, and the boundary is written into the model's
+protocol so a 7B does not pick whichever tag it saw last:
+
+- **`[RUN: cmd]`** — ONE command whose shape she already knows (list a folder, open an app, read a
+  file). Instant, free, handled by the backend's own tool layer. This is what she did before.
+- **`[TASK: description]`** — a job that needs **several steps or decisions** ("organize my
+  downloads by type", "find the report I edited last week"). It goes to `hannah-agent`, a
+  separate sidecar on `:8006` with a capable model, risk-tiered approvals, a timebox and an audit
+  log.
+
+**One voice, two hands.** The agent never speaks. Every real event it produces (accepted, plan,
+progress, needs permission, done, failed) is handed to the persona through the same path her
+eyes use, with one instruction: *relay this in one sentence, do not invent*. The event stream is
+the only truth about a task; Hannah is the only voice. Ask her "how is it going?" and she answers
+from the live status, not from memory. Say "yes" to an approval and it goes through — except
+`high`-risk actions, which require the button in the HUD (voice can be spoofed by anyone in the
+room).
+
+> **Privacy — this is the one exception to "everything is local".** The agent's default model is
+> **GLM 5.3 Flash** (Z.ai) via OpenRouter: cheap (a typical task costs a fraction of a cent), strong,
+> and **remote** — check OpenRouter's and Z.ai's data policies for retention terms. Everything a task touches — file contents, command output, your
+> request — reaches that third party. The `companion` preset and the agent's sensitive-path
+> denylist limit *what* a task can read; they do not change *where* it goes. It is **off by
+> default**; enable it knowingly (`AGENT_ENABLED=true`), or use the agent's local Ollama profile
+> for sensitive work. Details: `hannah-agent/docs/SECURITY.md`.
+
 ## Per-repo documentation
 
 | Where | What you'll find |
@@ -99,6 +129,7 @@ cd hannah-frontend && npm run build && cd ../hannah-desktop && npm start   # no 
 | `hannah-frontend/README.md` | VRM avatar, retarget from geometry, state and audio capture |
 | `SETUP.md` | Bring everything up on a new machine, step by step |
 | `SKILLS.md` | Teach her capabilities without touching code |
+| `hannah-agent/docs/` | The agent: integration contract (`INTEGRATION.md`), coexistence with the backend's tool layer, security model, decision records |
 
 ## Tools (internet + terminal)
 

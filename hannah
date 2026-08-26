@@ -29,6 +29,10 @@ up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # 60s a una URL http que nunca responde. Esto lo detecta y lo dice.
 vite_http_ok() { curl -sf -o /dev/null -m 2 "http://localhost:5173/" 2>/dev/null; }
 has() { command -v "$1" >/dev/null 2>&1; }
+# Una variable del .env del backend (sin exportar todo: solo la que se pide). Vacío si no está.
+envval() { sed -n "s/^[[:space:]]*$1=\([^#]*\).*/\1/p" "$BACK/.env" 2>/dev/null | head -1 | tr -d "\"'" | xargs; }
+AGENT="$ROOT/hannah-agent"
+agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 
 # ── `hannah doctor` — diagnóstico del entorno ─────────────────────────────────
 # Dice si el overlay va a poder flotar acá y, si no, qué falta. Es lo primero que conviene
@@ -43,10 +47,21 @@ doctor() {
   for t in hyprctl kdotool wmctrl xdotool swaymsg; do has "$t" && printf ' %s' "$t"; done
   echo
   printf '  servicios  :'
-  for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 11434:ollama; do
+  for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 8006:agent 11434:ollama; do
     up "${p%%:*}" && printf ' %s✓' "${p##*:}" || printf ' %s✗' "${p##*:}"
   done
   echo; echo
+  if agent_on; then
+    printf '  manos      : AGENT_ENABLED=true ·'
+    has bun && printf ' bun %s' "$(bun --version 2>/dev/null)" || printf ' bun FALTA (https://bun.sh)'
+    [ -f "$HOME/.config/hannah-agent/config.jsonc" ] || [ -f "$HOME/.config/hannah-agent/hannah-agent.jsonc" ] \
+      && printf ' · perfil instalado' || printf ' · perfil FALTA (hannah-agent/scripts/install-profile.sh --openrouter)'
+    [ -n "$(envval OPENROUTER_API_KEY)" ] && printf ' · key ✓' || printf ' · OPENROUTER_API_KEY FALTA (cada tarea fallará al modelo)'
+    echo
+  else
+    echo "  manos      : apagadas (AGENT_ENABLED=false) — Hannah conversa y ejecuta comandos simples, sin tareas de varios pasos"
+  fi
+  echo
 
   local dl; dl=$(printf '%s' "$de" | tr '[:upper:]' '[:lower:]')
   if has hyprctl && [[ "$dl" == *hyprland* ]]; then
@@ -79,7 +94,7 @@ doctor() {
 # Se mata por PUERTO y por patrón, no por una lista de PIDs guardada, a propósito: así se
 # lleva también los sidecars HUÉRFANOS de corridas anteriores. Eso no es teórico — había uno
 # de una corrida vieja ocupando 2.4GB de VRAM sin que nada lo registrara.
-SERVICES="3001:backend 5173:vite 8001:asr 8002:tts 8003:vision 8004:emage 8005:motion"
+SERVICES="3001:backend 5173:vite 8001:asr 8002:tts 8003:vision 8004:emage 8005:motion 8006:agent"
 
 # $ROOT entra en un ERE de pgrep: si la ruta de instalación tiene ( ) + . etc., el patrón se
 # corrompe y el apagado deja de encontrar nada, en silencio.
@@ -205,6 +220,13 @@ stop_all() {
     fi
     kill_tree "$pid" && { echo "  ${s##*:} (pid $pid)"; n=$((n+1)); }
   done
+  # 2b) el agente (bun). Su binario está fuera del repo, así que argv0_in_project lo rechaza:
+  #     acá manda el cwd (dentro de hannah-agent). Es el ÚNICO caso en que se acepta cwd solo.
+  for pid in $(pgrep -u "$(id -u)" -x bun 2>/dev/null); do
+    case "$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" in
+      "$AGENT"|"$AGENT"/*) kill_tree "$pid" && { echo "  agent (pid $pid)"; n=$((n+1)); } ;;
+    esac
+  done
   # 3) sidecars huérfanos: ya no escuchan ningún puerto pero siguen reteniendo VRAM
   for pid in $(pgrep -u "$(id -u)" -f "$ROOT_RE/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
     argv0_in_project "$pid" || continue     # el ejecutable tiene que ser del repo
@@ -321,6 +343,16 @@ has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG"
 up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & ) 9>&-
 up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & ) 9>&-
 up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
+# Las "manos" (hannah-agent, :8006): SOLO si AGENT_ENABLED=true en el .env del backend. Se
+# arranca ANTES que el backend para que su health-check inicial lo encuentre vivo.
+if agent_on; then
+  if ! has bun; then echo "[hannah] AGENT_ENABLED=true pero falta bun (https://bun.sh) — sin manos" >>"$LOG"
+  elif [ ! -d "$AGENT" ]; then echo "[hannah] AGENT_ENABLED=true pero no está $AGENT — sin manos" >>"$LOG"
+  else
+    up 8006 || ( cd "$AGENT" && HANNAH_AGENT_TOKEN="$(envval HANNAH_AGENT_TOKEN)" OPENROUTER_API_KEY="$(envval OPENROUTER_API_KEY)" \
+      nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
+  fi
+fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
 if up 5173; then
   # Puerto ocupado: puede ser un Vite en HTTPS (npm run dev a mano) -> el overlay no carga.
