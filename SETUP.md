@@ -158,18 +158,23 @@ runs simple commands without it.
 sudo pacman -S unzip && curl -fsSL https://bun.sh/install | bash     # CachyOS/Arch; Debian: apt install unzip
 cd hannah-agent && bun install
 
-# 2) the model. Default profile: GLM 5.3 Flash (Z.ai) via OpenRouter — cheap, remote: READ THE
-#    PRIVACY NOTE in README. Key: https://openrouter.ai/keys — the account needs CREDITS.
-scripts/install-profile.sh --openrouter        # writes ~/.config/hannah-agent/
-#    alternatives: --local (Ollama, needs qwen3-coder:30b — does NOT fit next to the rest in 16GB)
-#                  (no flag) Anthropic, needs ANTHROPIC_API_KEY
+# 2) the model — remote either way: READ THE PRIVACY NOTE in README.
+#    Default profile: Claude Sonnet 5 (Anthropic). Key: https://console.anthropic.com
+scripts/install-profile.sh                     # writes ~/.config/hannah-agent/
+#    alternatives: --openrouter  GLM 5.3 Flash (Z.ai) via OpenRouter, cheaper; key at
+#                               https://openrouter.ai/keys — the account needs CREDITS
+#                  --local      Ollama, needs qwen3-coder:30b — does NOT fit next to the rest in 16GB
 
 # 3) tell the backend, in hannah-backend/.env
 AGENT_ENABLED=true
-OPENROUTER_API_KEY=sk-or-...          # the AGENT reads it (the launcher passes it through)
+ANTHROPIC_API_KEY=sk-ant-...          # or OPENROUTER_API_KEY=sk-or-... with --openrouter
 ```
 
-Then `./hannah` starts it on `:8006` before the backend, and `./hannah stop` shuts it down.
+The key can also be pasted in the ⚙ panel ("Manos"), which wins over `.env`. The launcher tells the
+provider from the key's prefix (`sk-ant-` / `sk-or-`) and passes it to the agent; the backend never
+uses it. Then `./hannah` starts the agent on `:8006` before the backend, and `./hannah stop` shuts
+it down. A read-only task like "count the files in my Downloads and name the three largest" runs
+two commands and costs a few cents on Sonnet.
 `./hannah doctor` tells you which of the three pieces (bun, profile, key) is missing. **Without a
 key (or credits) the agent starts but every task fails at the model** — Hannah will say the task failed; she
 will not pretend it worked.

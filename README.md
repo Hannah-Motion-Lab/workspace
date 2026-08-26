@@ -113,9 +113,9 @@ from the live status, not from memory. Say "yes" to an approval and it goes thro
 room).
 
 > **Privacy — this is the one exception to "everything is local".** The agent's default model is
-> **GLM 5.3 Flash** (Z.ai) via OpenRouter: cheap (a typical task costs a fraction of a cent), strong,
-> and **remote** — check OpenRouter's and Z.ai's data policies for retention terms. Everything a task touches — file contents, command output, your
-> request — reaches that third party. The `companion` preset and the agent's sensitive-path
+> **Claude Sonnet 5** (Anthropic); the `--openrouter` profile uses **GLM 5.3 Flash** (Z.ai) via
+> OpenRouter, cheaper. Both are **remote** — check the provider's data policy for retention terms.
+> Everything a task touches — file contents, command output, your request — reaches that third party. The `companion` preset and the agent's sensitive-path
 > denylist limit *what* a task can read; they do not change *where* it goes. It is **off by
 > default**; enable it knowingly (`AGENT_ENABLED=true`), or use the agent's local Ollama profile
 > for sensitive work. Details: `hannah-agent/docs/SECURITY.md`.

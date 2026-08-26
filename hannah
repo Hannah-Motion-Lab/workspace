@@ -28,6 +28,10 @@ up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # (p.ej. `npm run dev` a mano), el puerto figura ocupado y antes nos quedábamos esperando
 # 60s a una URL http que nunca responde. Esto lo detecta y lo dice.
 vite_http_ok() { curl -sf -o /dev/null -m 2 "http://localhost:5173/" 2>/dev/null; }
+# bun (el agente) se instala en ~/.bun/bin, que no está en el PATH de un atajo de teclado
+# (Super+H no pasa por el perfil del shell). Igual en Linux y macOS.
+[ -d "$HOME/.bun/bin" ] && case ":$PATH:" in *":$HOME/.bun/bin:"*) ;; *) PATH="$HOME/.bun/bin:$PATH" ;; esac
+
 has() { command -v "$1" >/dev/null 2>&1; }
 # Una variable del .env del backend (sin exportar todo: solo la que se pide). Vacío si no está.
 envval() { sed -n "s/^[[:space:]]*$1=\([^#]*\).*/\1/p" "$BACK/.env" 2>/dev/null | head -1 | tr -d "\"'" | xargs; }
@@ -38,7 +42,14 @@ agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 agent_key() {
   local k
   k="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('agent',{}).get('apiKey',''))" "$BACK/data/settings.json" 2>/dev/null)"
-  [ -n "$k" ] && printf '%s' "$k" || envval OPENROUTER_API_KEY
+  [ -n "$k" ] && { printf '%s' "$k"; return; }
+  k="$(envval ANTHROPIC_API_KEY)"; [ -n "$k" ] && { printf '%s' "$k"; return; }
+  envval OPENROUTER_API_KEY
+}
+# El proveedor se deduce del prefijo de la key: sk-ant-… es Anthropic, sk-or-… es OpenRouter.
+# El agente lee la key de la variable de SU proveedor, así que hay que exportar la correcta.
+agent_key_var() {
+  case "$(agent_key)" in sk-ant-*) echo ANTHROPIC_API_KEY ;; *) echo OPENROUTER_API_KEY ;; esac
 }
 
 # ── `hannah doctor` — diagnóstico del entorno ─────────────────────────────────
@@ -62,8 +73,8 @@ doctor() {
     printf '  manos      : AGENT_ENABLED=true ·'
     has bun && printf ' bun %s' "$(bun --version 2>/dev/null)" || printf ' bun FALTA (https://bun.sh)'
     [ -f "$HOME/.config/hannah-agent/config.jsonc" ] || [ -f "$HOME/.config/hannah-agent/hannah-agent.jsonc" ] \
-      && printf ' · perfil instalado' || printf ' · perfil FALTA (hannah-agent/scripts/install-profile.sh --openrouter)'
-    [ -n "$(agent_key)" ] && printf ' · key ✓' || printf ' · key FALTA: panel ⚙ o OPENROUTER_API_KEY en .env (cada tarea fallará al modelo)'
+      && printf ' · perfil instalado' || printf ' · perfil FALTA (hannah-agent/scripts/install-profile.sh, o --openrouter)'
+    [ -n "$(agent_key)" ] && printf ' · key ✓' || printf ' · key FALTA: panel ⚙, o ANTHROPIC_API_KEY / OPENROUTER_API_KEY en .env (cada tarea fallará al modelo)'
     echo
   else
     echo "  manos      : apagadas (AGENT_ENABLED=false) — Hannah conversa y ejecuta comandos simples, sin tareas de varios pasos"
@@ -356,8 +367,8 @@ if agent_on; then
   if ! has bun; then echo "[hannah] AGENT_ENABLED=true pero falta bun (https://bun.sh) — sin manos" >>"$LOG"
   elif [ ! -d "$AGENT" ]; then echo "[hannah] AGENT_ENABLED=true pero no está $AGENT — sin manos" >>"$LOG"
   else
-    up 8006 || ( cd "$AGENT" && HANNAH_AGENT_TOKEN="$(envval HANNAH_AGENT_TOKEN)" OPENROUTER_API_KEY="$(agent_key)" \
-      nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
+    up 8006 || ( cd "$AGENT" && export HANNAH_AGENT_TOKEN="$(envval HANNAH_AGENT_TOKEN)" "$(agent_key_var)=$(agent_key)" \
+      && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
