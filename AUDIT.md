@@ -1,258 +1,272 @@
-# Hannah project audit — 2026-08-15
+# Hannah project audit — 2026-08-27
 
-**Scope:** the 4 repos (backend, frontend, desktop, motion-lab) + launcher + configs (~9.6k lines).
-**Method:** 10 automated auditors in parallel (duplication, Node/React practices, over-engineering,
-Python, security, consistency, tests) → 101 findings → dedup → **manual verification of the
-critical ones against the real code**.
-**Result:** 6 critical, ~35 medium, ~45 minor (after dedup). Nothing was modified.
+**Scope:** backend (4.5k lines), frontend (2.8k), desktop/Electron (0.7k), agent façade + policy
+(3.8k), the `hannah` launcher (468) and `install.sh` (242). Previous audit: [AUDIT-2026-08-15.md](AUDIT-2026-08-15.md).
+**Method:** three parallel reviewers (backend/API; frontend + Electron; agent + launcher + installer),
+then **every critical and high finding re-verified by hand against the code** before it went into
+this file. Nothing was modified: this is the list to approve, item by item.
+**Result:** 5 critical · 10 high · 22 medium · 12 low.
 
-> **Severity context.** Hannah is self-hosted, single user, on localhost. Several security
-> "criticals" **only bite if the backend ends up exposed on the network or once the repo goes public** —
-> but that is exactly what you have planned, and the backend **listens on `0.0.0.0` today** (the whole LAN). So
-> they are priority #1 before sharing. The rest (duplication, dead code, perf) is the normal technical debt
-> of a project that grew fast.
+> **Severity context.** Since the last audit the product changed shape: it is **distributed**
+> (installer, AppImage, release), it holds **API keys** (brain, voice, hands), it can **act on the
+> machine** (pty, agent with shell), and the LAN reaches it **by design** through the Vite proxy on
+> `0.0.0.0:5173`. Two things follow. First, "the backend binds to 127.0.0.1" no longer protects
+> anything: the proxy *is* the backend for anyone on the Wi-Fi. Second, every unauthenticated
+> loopback port (backend :3001, agent :8006 + the engine's own API) is reachable by any other
+> process of the same user **and by any web page open in a browser** (a plain `fetch` with a
+> text/plain body needs no CORS preflight). The criticals below are all variations of one fact:
+> **nothing on any surface asks "who are you?"**
 
 ---
 
 ## Executive summary
 
-**Overall health: good and pragmatic, with debt concentrated in 4 hotspots.** The code works, the
-deterministic layers + tags + skills coexist on purpose (good). The real debt:
+**Overall: solid engineering with one structural hole.** The dangerous primitives are individually
+well guarded (danger regex + confirmation, allowlisted `open_app`, argv-based `open_url`,
+parameterized SQL, redacted settings, sanitized agent text, risk-tiered approvals with a HUD
+second factor, deny-list on the agent, atomic writes, no static dir, no transcripts in logs). What
+is missing is **authentication at the edges**, so every one of those guards can be reached — or
+reconfigured — by someone who is not the user. The rest is a normal mix of robustness bugs
+(leaks, races, a crash-on-bad-avatar) and distribution hygiene (unverified downloads, EOL Electron,
+0644 secrets).
 
-1. **Network exposure** — `express.static('.')` gives away `data/settings.json` (API keys) and `data/memory.db`
-   (your whole history), the terminal pty runs a shell with no gate and no auth, and everything listens on `0.0.0.0`.
-2. **Dead code from the pivots** — the anime/smplx toggle was left half-removed and drags along a **19 MB preload
-   on every start**, plus `toolSchemas`/`cmdAllowlist`/`trustModel`/`recall_memory`/Tauri leftovers.
-3. **Duplication** — 4 state modules with the same `load/persist`, the action-tag list in 2
-   hand-written regexes, move parsing copied between backend and Electron, 10 identical `catch`es in the API.
-4. **A codebase with no safety net** — 0 ESLint, and the regex-heavy layer (intent parsers, DANGER) **without a
-   single test**; worse: the current test **corrupts your real memory** when it runs.
+### Top actions (maximum impact / minimum effort)
 
-### Top 6 actions (maximum impact / minimum effort)
-
-| # | Action | Covers | Effort |
-|---|--------|------|----------|
-| 1 | `express.static('public')` instead of `'.'` + `app.listen(port, '127.0.0.1')` | 2 criticals (keys+memory on the LAN) | S |
-| 2 | `open_url`: `execFile('xdg-open',[u])` + validate with `new URL(u)` | 1 critical (RCE via injection) | S |
-| 3 | Gate `TERMINAL_START/IN` with `systemControl` (+ the bind from point 1) | 1 critical (shell with no auth) | S |
-| 4 | Remove the `logger.info("ASR result: …")` from the ASR sidecar | 1 critical (privacy) | S |
-| 5 | Delete dead code (smplx/rpm avatars + 19MB preload, toolSchemas/names, cmdAllowlist, trustModel, recall_memory, Tauri) | ~500 lines + 19MB | M |
-| 6 | `lib/api.js` with `API_BASE` for the frontend's 10 fetches | panels broken in Electron + dedup | S |
+| # | Action | Closes | Effort |
+|---|---|---|---|
+| 1 | **A pairing secret for the UI**: backend generates `data/ui-token` on first run, prints it, the panel/launcher inject it; required on `POST /session`, on the WS upgrade and on every mutating route. Vite binds to `localhost` unless `HANNAH_LAN=1`. | C1, C2, H3, H7(a) | M |
+| 2 | **Agent token + engine password generated by the installer/launcher** when absent; wire `mode` clamped to the operator's `AGENT_MODE`; require `Content-Type: application/json` and reject requests with an `Origin`. | C3, C4 | S |
+| 3 | **Verify downloads**: publish and check `SHA256SUMS` in `install.sh` (`dl` → tmp → sha → mv), load checkpoints with `weights_only=True`/safetensors, pin the two nested `curl \| sh`. | C5, H10 | S |
+| 4 | **Delete `POST /api/v1/text`** (dev leftover). | C2 | S |
+| 5 | **Electron hardening**: `setWindowOpenHandler` → `shell.openExternal`, deny `will-navigate`, permission handler scoped to the app origin, drop `webSecurity:false` (stable origin + CORS entry), `--no-sandbox` only when userns is really unavailable, upgrade off Electron 33. | H1, H2 | M |
+| 6 | **Scrub secrets from child environments** (backend pty and agent tool shells: drop `*_API_KEY`/`*TOKEN*`), deny `hannah-backend/data/**` and `*.db` in the agent policy, write `settings.json`/`memory.db`/agent DB with mode `0600`. | H5, H9(b), M1 | S |
+| 7 | `kdotool` query and `cat`/`ls` paths as argv / `JSON.stringify`; SSRF filter on `fetch_url`; `by` derived server-side (backend) and `voice\|hud` only on the wire (façade). | H4, H6, H7, M4 | S |
 
 ---
 
-## 🔴 Critical (verified against the code)
+## 🔴 Critical (verified)
 
-### C1 · `express.static('.')` exposes API keys and history over the network
-`hannah-backend/src/server.js:48` + `:68`
-```js
-app.use(express.static('.'));          // serves the WHOLE backend root
-const httpServer = app.listen(config.port, () => { … });  // no host -> 0.0.0.0
-```
-**Why it matters:** `GET /data/settings.json` returns the config with `apiKey` in **plain text**
-(`snapshot()` in `state/settings.js:66` writes the secret unredacted) and `GET /data/memory.db`
-downloads **5.5 MB of every conversation you have had**. The `/settings` endpoint is careful to redact the key…
-but the static handler gives it away anyway. And since it listens on `0.0.0.0`, any machine on the LAN can read it (curl does
-not go through CORS). Today your `llm.apiKey` is `"ollama"` (harmless), but the moment you use a Groq/OpenAI key
-it is exposed — and the memory already is.
-**Fix (S):** serve only what is public → `app.get('/test-client.html', (req,res)=>res.sendFile(…))` or
-`express.static('public')`; and `app.listen(config.port, '127.0.0.1')` (host configurable).
+### C1 · The whole REST + WebSocket surface is unauthenticated, and the LAN reaches it through Vite
+`hannah-backend/src/api/sessions.js:5-8`, `src/gateway/websocket.js:18-31`, `src/api/router.js:23-38`,
+`hannah-frontend/vite.config.js:17-25`
+`POST /api/v1/session` hands out a uuid to anyone; the WS upgrade accepts any live uuid; no token,
+password or origin check anywhere. Vite listens on `0.0.0.0` and proxies `/api` and `/ws` to the
+backend, so **everything below is reachable from any device on the Wi-Fi**, and from any process on
+the machine:
+- `POST /settings` (`src/api/settings.js:14`): set `llm.baseUrl` to an attacker host → every turn
+  (with the rolling memory and recalled history in the system prompt) is sent to them **with the
+  user's real API key** (blank `apiKey` = keep the stored one). Also `agent.mode`, `agent.url`.
+- `POST /skills`: plant a `SKILL.md` with `run:` and `phrases:` that fires on the next utterance.
+- `TERMINAL_START` / `TERMINAL_IN`: a real shell, when `TOOLS_SYSTEM_CONTROL=true`.
+- `AGENT_APPROVAL`: any client is attributed `by:'hud'` (`websocket.js:138`) — the second factor
+  that voice cannot grant is a WS message anyone can send.
+**Fix (M):** a shared secret (generated on first run, stored `0600`, shown once in the panel /
+printed by the launcher), required on `/session`, the WS upgrade (query or subprotocol) and all
+mutating routes; Vite on `localhost` by default with an explicit `HANNAH_LAN=1` opt-in; `hud`
+attribution derived from the Electron origin, never from the client.
 
-### C2 · Command injection in `open_url` (RCE with no flag at all)
-`hannah-backend/src/pipeline/tools.js:94`
-```js
-exec(`${opener} "${u}"`, …);   // the URL goes raw into the shell, inside quotes
-```
-**Why it matters:** `u` is only validated with `/^https?:\/\//` and is interpolated into an `exec()` (which uses `/bin/sh`).
-A URL with a quote escapes: `https://x";touch /tmp/pwned;"`. `open_url` is **not** behind
-`systemControl` nor behind `DANGER`: it fires from the model's `[BROWSE:]` tag and from `handleOpenIntent`.
-Real chain: malicious page read with `fetch_url`/`web_search` → prompt injection → the model emits
-`[BROWSE: <payload>]` → code execution. It is the worst path of all, because nothing has to be turned on for it to work.
-**Fix (S):** `execFile('xdg-open', [u])` (no shell) + `new URL(u)` rejecting schemes ≠ http/https.
+### C2 · `POST /api/v1/text` runs the LLM **with the action loop**, no session, no auth
+`hannah-backend/src/api/router.js:41-88`
+Calls `generateDialogueStream(mockHistory, …)` directly; with `TOOLS_ENABLED` the model's
+`[RUN:]`/`[SKILL:]`/`[FETCH:]` tags execute (`generateWithActions` → `runTool`) with `ctx.sessionId`
+undefined. Reached through the proxy with one `curl`. A dev leftover.
+**Fix (S):** delete the route (the WS path is the real one), or gate it behind the secret and
+`noActions`.
 
-### C3 · Terminal (pty) = shell with no authentication and no `systemControl` gate
-`hannah-backend/src/gateway/websocket.js:112` → `terminal.js:39`
-```js
-case 'TERMINAL_IN': terminalInput(sessionId, data.data || ''); break;
-// terminal.js: input(sessionId,data){ sessions.get(sessionId)?.pty.write(data); }
-```
-**Why it matters:** `TERMINAL_START` creates a login pty (`$SHELL -l`) **without ever looking at `systemControl`**
-(that flag only protects `run_command` and `terminal` skills). With `POST /session` unauthenticated + the `0.0.0.0` bind,
-any device on the LAN can open the WS and **type arbitrary commands into your shell** — the `DANGER`/
-confirmation does not apply to this path either. "system control off" does NOT guarantee that no shell runs.
-**Fix (S):** gate `TERMINAL_START/IN/RESIZE` with `systemControl` **and** bind to `127.0.0.1` (C1). Document
-that the terminal channel is equivalent to shell access.
+### C3 · The agent façade is unauthenticated by default and the caller picks the permission preset
+`hannah-agent/.../facade/routes.ts:46-47` (`if (!token) return true`), `facade/protocol.ts:136-139`
+(wire `mode`), `policy/presets.ts:36` (`trusted-project` → `bash: shellRules("allow")`),
+`hannah-backend/.env.example:75` (`HANNAH_AGENT_TOKEN` commented out), `hannah` launcher `:370`
+(forwards the empty token), `install.sh` (never generates one)
+Body parsing ignores `Content-Type` and nothing rejects a foreign `Origin` on `/hannah/v0/*`, so a
+**web page** can do `fetch("http://127.0.0.1:8006/hannah/v0/tasks", {method:"POST", body:'{"prompt":"…","mode":"trusted-project"}'})`
+(a "simple request": no preflight) and get **arbitrary shell as the user with zero approvals**
+(only the danger regex stands). Same for any other local user, container with host networking, WSL.
+**Fix (S):** installer/launcher generate the token (`openssl rand -hex 32` → `.env`); require
+`application/json`; reject requests carrying an `Origin`; clamp the wire `mode` to an operator
+setting (`AGENT_MODE`), never above it.
 
-### C4 · The ASR sidecar logs the user's transcript (violates the privacy rule)
-`hannah-backend/sidecar/asr/main.py:75`
-```py
-logger.info(f"ASR result: {transcript[:80]}")
-```
-**Why it matters:** CLAUDE.md is explicit — *"Never log user content (transcripts, LLM responses)"*.
-Every sentence you say ends up written into the log (journald/persistent stdout). It is the only sidecar that breaks
-the guarantee. (There is also a twin violation in `websocket.js:85`, which logs the client's raw payload.)
-**Fix (S):** `logger.info(f"ASR done: {len(transcript)} chars, lang={info.language}")`.
+### C4 · The engine's native API shares `:8006`, is guarded by a *different* secret the launcher never sets
+`hannah-agent/.../cli/cmd/serve.ts:15-16` (`"Warning: HANNAH_AGENT_SERVER_PASSWORD is not set; server is unsecured."` —
+this warning appears in our own logs), `server/routes/instance/httpapi/groups/{session,permission,pty}.ts`,
+`permission/index.ts:186` (`reply: "always"`)
+Even with `HANNAH_AGENT_TOKEN` set, a local caller can `POST /session` → prompt → reply `always`
+to the permission → **bypass the façade's approvals, the HUD factor, the timeout and the audit
+log**. The façade is deliberately mounted outside that auth.
+**Fix (S):** launcher exports `HANNAH_AGENT_SERVER_PASSWORD` (same generated secret; the backend
+never needs it) — or a serve flag that disables the native session/permission/PTY routes.
 
-### C5 · The Settings/Shortcuts/Skills panels use relative `fetch` → broken in the Electron app
-`hannah-frontend/src/components/SettingsPanel.jsx` (10 calls: 100, 150, 170, 237, 242, 248, 260, 269, 342, 377)
-```js
-fetch('/api/v1/settings')   // vs useWebSocket.js: API_BASE = DESKTOP ? DESKTOP.backendBase : ''
-```
-**Why it matters:** in packaged Electron the page is served from the mini static server in
-`main.js` (random port, no proxy). A `fetch('/api/v1/…')` resolves against that origin and gives 404 →
-every section falls into "backend no disponible". **Settings, Shortcuts, Skills and the voice picker do not work
-in the desktop app** (only in the browser via the Vite proxy). Root cause: the fetch pattern is copied
-10 times with no helper, so the `API_BASE` that *was* added in `useWebSocket.js` never propagated.
-**Fix (S):** `src/lib/api.js` with `API_BASE` + `apiGet/apiPost/apiDelete`; replace the 10 calls.
-
-### C6 · `npm test` writes into your REAL memory and can call Ollama live
-`hannah-backend/tests/unit/conversationManager.test.js:26`
-**Why it matters:** `addTurn` persists to the real SQLite (`memoryStore` opens `data/memory.db` with a
-hardcoded path, no override for tests). Every `npm test` inserts "turno N" rows into your long-term
-memory; with `MEMORY_RECALL` on by default it fires embeddings at Ollama, and once the summary threshold is crossed
-it **rewrites your persistent summary**, folding in test garbage. The test passes, but it **corrupts real data**.
-**Fix (S):** injectable DB path (`MEMORY_DB_PATH=':memory:'` in tests) + `MEMORY_RECALL=false` in the setup.
+### C5 · Installer downloads are not verified; checkpoints are loaded with pickle
+`hannah-site/install.sh:178` (`dl` = `curl -fL -o`), `:186-190` (motion weights by asset name from
+"latest release"), `:206-209` (AppImage), `:28` (Kokoro from a third-party repo, mutable tag),
+`:78`, `:89` (nested `curl … | sh` for uv and Ollama, unpinned); `hannah-motion-lab/src/motionlab/pipeline.py:31`
+(`torch.load(..., weights_only=False)`)
+`SHA256SUMS` is **published in the release but never read by the installer**. A compromised
+GitHub account or a re-pointed tag → arbitrary code every time `hannah` starts the `:8005`
+sidecar (pickle) or the overlay (AppImage). The script is not wrapped in `main()`, so a truncated
+stream executes a prefix.
+**Fix (S):** `dl` → tmp, verify against `SHA256SUMS` (and `gh attestation verify` when available),
+then `mv`; `weights_only=True` or safetensors; `releases/download/<tag>/…` URLs; pin the nested
+installers to a version and a checksum; `main(){…}; main "$@"`.
 
 ---
 
-## 🟡 Medium (grouped by theme)
+## 🟠 High (verified)
 
-### Security / robustness
-- **DANGER is an evadable blocklist** (`tools.js:17`). It is the only gate between the LLM and destructive commands
-  with `systemControl=true`, and it is bypassed trivially: `\brm\s+\S` does not match `ls | xargs rm` nor `find . -delete`,
-  `shred`, `truncate -s0`, `> archivo`, `: > f`, nor `base64|sh`/`eval`. **Fix (M):** either confirmation for EVERY
-  `run_command`, or make it explicit that DANGER is best-effort (not a barrier).
-- **Skills' `{arg}` is interpolated raw into the shell** (`skills.js:139`) → injection with `;`/`$()`/pipes. Gated
-  by `systemControl`, but turning that on + injection = RCE. **Fix (M):** `execFile`/shell-quote, or always treat
-  `run` with `{arg}` as destructive (confirm).
-- **SSRF in `fetch_url`/`web_search`** (`tools.js:72`): they reach `127.0.0.1:11434` (Ollama), `:8005` (motion),
-  the LAN and cloud metadata (169.254.169.254). A web page read earlier can make Hannah read her own internal
-  endpoints. **Fix (M):** reject loopback/private/link-local before the fetch.
-- **WS with no `maxPayload` and no type validation** (`websocket.js:14`): the 5MB cap only covers binary; `data.frame`
-  and `data.text` are not validated. **Fix (S).**
-- **Electron `webSecurity:false` + `no-sandbox`** (`main.js:48`): accepted risk, but **document it**.
+### H1 · Electron renderer: `webSecurity:false`, no window-open / navigation / permission handlers, sandbox always off
+`hannah-desktop/main.js:376` (`webSecurity: false`), `:18,27-37` (`--no-sandbox`), no
+`setWindowOpenHandler` / `will-navigate` / `setPermissionRequestHandler` anywhere (grep: 0)
+`SettingsPanel.jsx` renders `<a target="_blank" href={cloud.keys}>`: without a window-open handler
+Electron opens a **new window inheriting the parent's webPreferences** (no same-origin policy, the
+preload bridge). Any XSS/open-redirect on that site — or a dragged `.html` file (no `drop` handler) —
+can `fetch('http://localhost:3001/api/v1/settings')`, swap `baseUrl` and exfiltrate keys from
+inside the app; mic/camera are auto-granted to any such page.
+**Fix (M):** `setWindowOpenHandler(({url}) => { shell.openExternal(url); return {action:'deny'} })`;
+`will-navigate` deny unless app origin; permission handler allowing `media` only for the app origin;
+give the app a stable origin (fixed port or `protocol.handle('hannah')`) + `CORS_ORIGIN` entry and
+drop `webSecurity:false`; `--no-sandbox` only when userns is actually unavailable.
 
-### Duplication (consolidate)
-- **Deterministic layer copied** between `processVoiceTurn` and `processUserTextTurn` (`orchestrator.js:161` vs 231):
-  ~14 nearly identical lines + the magic string *"(Responde al usuario con este resultado real…)"* twice.
-  **Fix (S):** a `runDeterministicLayer(text, …)` helper.
-- **Action-tag list in 2 hand-written regexes** (`llm.js:113` `ACTION_RE` vs `orchestrator.js:74` strip): if
-  you add a tag and forget the strip, **the TTS reads it out loud**. **Fix (S):** derive both from `Object.keys(ACTION_TOOL)`.
-- **DANGER→confirm gate duplicated** between `run_command` (`tools.js:162`) and `terminal` skills (`skills.js:159`).
-  This is security: if they diverge, one path confirms differently. **Fix (S):** `confirmIfDangerous(cmd, ctx)`.
-- **JSON persistence duplicated** between `settings.js` and `shortcuts.js` (identical `persist/load`) + `DATA_DIR`
-  computed in 4 modules. **Fix (S):** `state/dataDir.js` + `jsonFile(name)`.
-- **10 identical `catch → res.status(500)`** in `api/*.js` even though there is a global error middleware in
-  `server.js:54` doing the same thing (it is never reached). **Fix (S):** a `handler(slug, fn)` wrapper.
-- **Vector recall duplicated** between `recallContext` (`llm.js:21`) and the `recall_memory` tool (`tools.js:32`),
-  **with diverging thresholds** (0.55 vs 0.5, configured K vs 3). **Fix (S):** `recallTopK()` in `embeddings.js`.
-- **backend `windowControl.js` ↔ `hannah-desktop/main.js`**: parsing of move specs and gaze (K=1.4,
-  eyeY=0.32, COMPACT 400×620) copied and **already diverged**. **Fix (M):** the backend sends the resolved spec.
-- **Avatars:** `VrmAvatar` and `SmplxAvatar` copy the frame computation and the axis-angle→quaternion decode
-  (`VrmAvatar.jsx:242` vs `SmplxAvatar.jsx:66`). **Fix (S):** `lib/motionUtils.js`.
-- **Memoized OpenAI client** repeated in `llm.js:33` and `vlm.js:8` (vlm does not invalidate on apiKey). **Fix (S).**
-- **`preload_cuda_libs()` copied** char-for-char between `asr/main.py` and `tts/main.py`. **Fix (S):** `sidecar/common.py`.
-- Minor ones of the same kind: `sh` in hyprland/x11, motion envelope (lab/emage), HTML strip in fetch_url/web_search,
-  `ensureHttps` in 2 tools, base64→bytes in useWebSocket, `CLOSE_ALIAS`, HUD buttons that ignore `IconBtn`.
+### H2 · Electron 33 is end-of-life
+`hannah-desktop/package.json:72` (`^33.4.11`, lockfile 33.4.11). No Chromium security backports;
+with H1 a renderer bug is the user account. **Fix (M):** move to a supported major (the argv flag
+handling for ≥38 already exists), retest `--in-process-gpu`.
 
-### Dead code / over-engineering
-- **`avatarMode` is zombie state:** `setAvatarMode` has no caller at all; it is `'vrm'` forever. It leaves
-  `Avatar.jsx` (113 lines), `SmplxAvatar.jsx` (124) dead and **a 19 MB `useGLTF.preload('/smplx_avatar.glb')`
-  that is downloaded on EVERY overlay start** (`SmplxAvatar.jsx:123`). **Fix (M):** delete both + the
-  preload + `VISEME_MAP` + `avatarMode` from the store.
-- **`toolSchemas()` is dead code** from the old function-calling (`tools.js:323`): `llm.js` imports it but
-  never calls it → **`config.tools.names` and the `TOOLS` env filter nothing** (every tool is reachable
-  through tags). **Fix (S):** delete.
-- **`cmdAllowlist`** (`config.js:146`) has no consumer and its comment *"con allowlist"* **is false** — with
-  `systemControl=true` any command runs. Config that misinforms about the real risk. **Fix (S):** delete.
-- **`skills.trustModel`** (`config.js:157`): editable and persisted from the ⚙ panel, but **no code
-  reads it** (the deterministic layer runs unconditionally). UI that lies to the user. **Fix (S):** delete or implement.
-- **`recall_memory` / `[RECALL:]`**: the tool exists but no prompt teaches it and the config itself says it is
-  omitted. It duplicates `recallContext`. **Fix (S):** delete the tool and `RECALL` from the regexes.
-- **Tauri leftovers:** `const isTauri` in `App.jsx:11` (dead) + `@tauri-apps/api`/`cli` in devDeps with no
-  `src-tauri/`. **Fix (S):** delete.
-- **`motion` config half-migrated** (`config.js:118`): a single `sidecarUrl` for two incompatible providers;
-  `.env.example` pins `:8004` (EMAGE) while the default provider is `lab` (:8005) → **co-speech gestures fail
-  silently** with the documented setup. **Fix (S):** separate URLs per provider.
-- Minor: `getReference()` with no consumer, `motion.js` `action`/`intensity` that nobody passes, `pushFrame` pass-through
-  of `frameStore`, double `analyzeScene/analyzeFrame` wrapper, dead state in the store (`lastDetection`, `sessionId`).
+### H3 · The rate limiter skips exactly the traffic that is exposed
+`hannah-backend/src/server.js:40-51` — `skip: req.ip ∈ {127.0.0.1,…}` and no `trust proxy`, so
+everything arriving through Vite is `127.0.0.1` and never limited. Unlimited `POST /session`
+/`/text` from the LAN. **Fix (S):** set `trust proxy` deliberately and limit the real client.
 
-### React / performance
-- **`HUD.jsx:76` and `App.jsx:48` subscribe to the store WITHOUT a selector.** Zustand notifies on any change, and
-  during speech `setVisemes` fires several times/sec + `overlayGaze` at ~12 Hz + `addLog` per event →
-  **the HUD and the whole tree (Scene/Canvas included) re-render 20+ times/sec**. **Fix (S):** atomic selectors
-  (`useHannahStore(s => s.emotion)`). It is the highest-impact perf fix. (Also, `HUD` destructures `logs` it does not use.)
-- **Race in `connect()`** (`useWebSocket.js:259`): after the fetch's `await` it does not check `unmountedRef` → under
-  StrictMode it creates an orphan WebSocket that stays open forever and can reconnect on its own. **Fix (S).**
-- **The viseme reset timer (120ms) is not registered** in `visemeSchedule` (`useWebSocket.js:64`): it survives
-  barge-in (stomping the first viseme of the next sentence) and the id array is never emptied. **Fix (S).**
-- **`useWebSocket.js` (332 lines) mixes 5 non-React responsibilities** (transport, audio engine, viseme
-  scheduler, motion decode, router). **Fix (M):** extract `lib/audioPlayer.js` + `lib/wsClient.js`.
-- Minor: `useVision` does not clean up the interval/camera on unmount (it creates a 640×480 canvas every 2s); `onGaze` IPC
-  with no cleanup (double registration under StrictMode); `Avatar.jsx` rebuilds Sets on every frame; `GAZE_ON` is sent twice.
+### H4 · Shell injection in the KDE window adapter
+`hannah-backend/src/pipeline/desktop/kde.js:61` (`sh(\`kdotool search --name '${q}'\`)`) — the
+close-intent target (user text or `[CLOSE:]`) goes inside single quotes unescaped, and the close
+path does **not** require `TOOLS_SYSTEM_CONTROL`. `"close x'; systemctl poweroff #"` on KDE+kdotool.
+**Fix (S):** argv (`execFile`) or a `[\w -]` whitelist.
 
-### Correctness (subtle bugs)
-- **`handleOpenIntent`/`handleCloseIntent` (async) are called with no `await` and no `.catch`** (`orchestrator.js:165`,
-  235). A throw = `unhandledRejection` → **it takes the process down** (violates "never crash"). Same for `moveWindow()`
-  at 66/164/234. And the boolean they return is ignored → the model can re-open the app via `[OPEN:]`. **Fix (S).**
-- **With tools active, per-sentence pipelining is lost** (`llm.js:129`): the response comes in whole as ONE
-  segment → a single giant TTS call, time-to-first-audio = the full generation. It breaks the <500ms target
-  and "stream at every stage" on every turn. **Fix (S):** split by sentence in the no-actions path too.
-- **The `recentUserMove` Map grows without bound** per sessionId (`orchestrator.js:49`); same for `_session_prefix` in
-  `motion-lab/serve/main.py:39` (it holds CUDA tensors per session forever). **Fix (S):** TTL/LRU.
-- **`/text` with no `error` handler on the audioStream** (`router.js:53`): if the stream fails the request hangs
-  forever. **Fix (S).**
+### H5 · API keys leak into every child shell
+`hannah-backend/src/pipeline/terminal.js:18` (`env: process.env`) and the agent's tool shells
+(`hannah` launcher `:370` exports the key into the agent process; `policy/presets.ts:28-53` auto-allows
+`env`/`printenv`/`cat`). Any command — the panel, a skill, a prompt-injected agent task — reads
+`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `LLM_API_KEY`, `ELEVENLABS_API_KEY`.
+**Fix (S):** spawn with a scrubbed env (`*_API_KEY`, `*TOKEN*`); remove `env`/`printenv` from the
+agent's safe list; deny `/proc/*/environ`.
 
-### Python (sidecars + motion-lab)
-- **`async def` endpoints with synchronous inference** block the event loop in all 4 sidecars (`/health` does not
-  respond during each inference; concurrent requests get serialized). **Fix (S):** declare them `def` (FastAPI
-  hands them to the threadpool) or `run_in_executor`.
-- **Vision does not validate its input** (`vision/main.py:21`): corrupt base64/image → raw 500 instead of 400 (the
-  other sidecars do return 400). **Fix (S).** Also: no `/health`, `print()` instead of logging, uploads with no
-  size limit.
-- **`train_vae.py`/`train_flow.py` duplicate ~60 lines** of scaffolding that has already diverged (NaN threshold 1e3 vs 1e4). **Fix (M).**
-- Minor: T5 and models loaded on the first request (not at startup); `requirements.txt` with mixed pins
-  (`ultralytics`/`pillow` unpinned); checkpoint resume that does not restore the optimizer.
+### H6 · `fetch_url` is an unrestricted SSRF primitive
+`hannah-backend/src/pipeline/tools.js:73-89` — no host/IP filter; returns 2.5k chars to the model.
+`[FETCH: http://127.0.0.1:8006/hannah/v0/tasks]`, cloud metadata, other sidecars.
+**Fix (S):** block loopback/private/link-local and non-DNS hosts before fetching.
 
-### Config / contracts / docs
-- **`process.env` outside `config.js`** in `terminal.js:15` (SHELL/COMSPEC), `hyprland.js:16`, `x11.js:10`
-  (violates the rule). **Fix (S).**
-- **Stale docs:** README/CLAUDE.md/.env.example say things that are no longer true (Hannah "speaks
-  Spanish" vs the protocol in English; the motion section as "EMAGE :8004"; tools "OFF by default" vs an `.env` with
-  `TOOLS_ENABLED=true`). *(The consistency auditor was cut off by the session limit — this comes from the other auditors;
-  a dedicated pass is advisable.)*
+### H7 · Approval attribution is client-controlled on both ends
+(a) `hannah-backend/src/gateway/websocket.js:138` hardcodes `by:'hud'` for whatever the client
+sends; (b) `hannah-agent/.../facade/routes.ts:166` accepts `by:"timeout"` from the wire and the
+T7 guard only blocks `by==="voice"` → `{decision:"allow", by:"timeout"}` grants a high-risk approval
+without the HUD and the audit log says "timeout". **Fix (S):** derive the channel server-side;
+accept only `voice|hud` externally.
 
-### Tests / tooling
-- **0 ESLint** in the 3 JS repos (no config, no script, no devDep). It would catch the `no-unused-vars`,
-  `react-hooks/exhaustive-deps` and fire-and-forget items above for free. **Fix (S).**
-- **The regex-heavy layer does not have a single test:** `parseMoveIntent`, `resolveDataAction`/`handleOpen`/`handleClose`,
-  `parseFrontmatter`/`sshArg`/`resolveSkillPhrase`, the orchestrator's tag strip, and **the `DANGER` guard**
-  (the one thing that decides whether confirmation is asked before an `rm`). They are pure functions: the cheapest and
-  highest-value test in the repo. **Fix (S–M):** table-driven `string → expected` suites.
-- **`llm.test.js`** starts from an obsolete premise (the OpenAI client is no longer instantiated on import). Review.
-- **Declared but unused deps:** `@anthropic-ai/sdk`, `supertest`, `@tauri-apps/*`. **Fix (S).**
+### H8 · Risk tier is a regex on a dozen binaries
+`hannah-agent/.../policy/presets.ts:174-178` — `python3 -c`, `node -e`, `perl`, `find -delete`,
+`truncate`, `> file`, `rsync --delete`, `git reset --hard` are **medium**, i.e. grantable by a "sí".
+**Fix (S):** interpreters, output redirection and anything outside a read-only set → `high`.
+
+### H9 · Deny-list gaps on the agent
+`policy/paths.ts:79-90,103-105,130-145`, `policy/index.ts:99-113`
+(a) `$HOME/.aws/credentials` resolves under cwd; `~alice/…` is not expanded; a non-existent glob
+path (`~/.ss?/config`) falls back to a non-denied string; `cat<~/.ssh/config` is one token.
+(b) `hannah-backend/data/settings.json` (all keys) and `memory.db` (all history) are **not denied**;
+`.env` is caught by basename, `settings.json` is not. (c) Tools build `patterns` relative to
+`instance.worktree` but the policy hook resolves them against `InstanceState.directory` — a task
+in `~/Projects/app/src` reading `~/.mozilla/…` resolves to `~/Projects/.mozilla/…` and is allowed
+(runtime unconfirmed, code paths verified). **Fix (S/M):** expand `$HOME`/`${HOME}`/`~user`; match
+against the existing prefix when resolution fails; deny `hannah-backend/data/**` and `*.db`;
+classify absolute paths.
+
+### H10 · The installer is not idempotent
+`install.sh:178,180-181,189-190` — `dl` writes to the final path and every step is skipped on mere
+existence: Ctrl-C at 60 % of `kokoro-v1.0.onnx` → truncated file → "voice ✓" forever, TTS crashes.
+Also: leftover `$ROOT.tmp` makes the workspace clone die; the AppImage is downloaded but the
+launcher never uses it (it only knows `node_modules/electron`, and the installer never
+`npm install`s `hannah-desktop`) → after a fresh install `hannah` silently falls to browser mode;
+unauthenticated GitHub API (60/h) dies on shared NATs; an empty `asset()` yields `dl ""`.
+**Fix (S):** tmp → verify → `mv`; marker files; `rm -rf "$ROOT.tmp"` first; launcher prefers
+`~/.local/bin/Hannah.AppImage` when electron is absent; `releases/latest/download/<name>`.
 
 ---
 
-## ⚪ Minor (45) — summary
-Almost all of them are **small duplication** (copied helpers: `sh`, base64→bytes, `ensureHttps`, `stripHtml`, motion
-envelope, the `[Salida real de…]` format), **repeated magic numbers** (the `-1.6` floor in 4 files; inline palette/typography
-with no tokens module), **dead pass-throughs** (`visionLoop` re-exports `frameStore`), and **robustness
-polish** (`get_weather` with no timeout, `console.error` instead of the logger, the launcher with fragile steps). None
-urgent; they get swept little by little, or along with whatever refactor touches the area they belong to. Full list in the
-workflow journal.
+## 🟡 Medium
+
+| # | Where | What | Fix |
+|---|---|---|---|
+| M1 | `hannah-backend/src/state/dataDir.js:35`, `settings.js:63-74`; `hannah-backend/.env`; `~/.local/share/hannah-agent/*` | `settings.json` (plaintext keys), `memory.db` (all transcripts), the agent session DB (tool outputs), audit and logs are written **0644/0755** — readable by any local user. | `{ mode: 0o600 }`, `umask 077` on the data dirs |
+| M2 | `hannah-backend/src/config.js:21`, `.env.example:7` | `NODE_ENV=development` by default → error handler (`server.js:71-77`) returns `err.message`/stack to the (unauthenticated) client. | ship `production` |
+| M3 | `hannah-backend/src/pipeline/visionLoop.js:73-78`, `websocket.js:218-219` | Camera/scene text is injected into the prompt **with actions enabled** (agent text is `clean()`ed, VLM output is not): text held up to the webcam can steer a `[RUN:]`. | `noActions:true` for vision turns, or `clean()` |
+| M4 | `hannah-backend/src/pipeline/tools.js:273,306` | `cat ${fileTok}` / `ls -la ${dir}` interpolate an unescaped path (`[^\s"'\`]+` allows `;\|$()&`); the sibling create/delete intents already use `JSON.stringify`. | `JSON.stringify` |
+| M5 | `hannah-desktop/main.js:78-81` | Static dist server: `path.join(distDir, decodeURIComponent(url))` with no containment — **verified**: `GET /..%2f..%2f..%2fetc/passwd` → 200. `decodeURIComponent('%zz')` throws inside the handler. | `path.resolve` + prefix check; try/catch |
+| M6 | `hannah-desktop/.github/workflows/build.yml:159-164,175-177` | `actions/checkout` with a PAT keeps `persist-credentials: true` (token lands in `.git/config`) before `npm ci` runs dependency postinstalls (`esbuild`, `protobufjs`); actions pinned by tag; `build` job has no `permissions`. | `persist-credentials: false`, `permissions: contents: read`, SHA pins |
+| M7 | `hannah-frontend/src/hooks/useWebSocket.js:109-127,136-149` | Audio queue race: `decodeAudioData` resolves out of order → a short sentence can play before a long one; a chunk decoding during `stopPlayback` is pushed after the barge-in and plays anyway. | serialize decodes; a turn generation counter |
+| M8 | `hannah-frontend/src/components/Scene.jsx:80-82`, no `ErrorBoundary` anywhere | R3F rethrows loader errors into the tree: a truncated/bad avatar file → `GLTFLoader` throws → **the whole app unmounts** (blank overlay, WS gone) until relaunch. | ErrorBoundary around `<VrmAvatar>` that falls back to `/avatar.glb` |
+| M9 | `VrmAvatar.jsx` (no dispose), `Scene.jsx:81` | Each avatar swap keeps the previous model in drei's cache and on the GPU (`?v=<etag>` is a new key; no `VRMUtils.deepDispose`/`useGLTF.clear`); the factory model is always preloaded even when a custom one is active. | dispose + `useGLTF.clear(url)` on unmount; conditional preload |
+| M10 | `hannah-desktop/main.js:262-266,466-471` | On non-Hyprland X11 with `xdotool`, the gaze poll forks `xdotool` every 150 ms forever. | `screen.getCursorScreenPoint()` on native X11; poll ≥500 ms / only while visible |
+| M11 | `hannah-frontend/src/App.jsx:65-67,81-86` | Overlay turns mic (VAD) and camera on at connect and Electron grants silently; with a cloud brain, transcripts/scene descriptions leave the machine without a first-run consent. | first-run consent + indicator; permission handler |
+| M12 | `hannah-frontend/index.html:7-9` | Render-blocking Google Fonts: the overlay contacts Google on every launch and stays blank offline until the request times out. | bundle the two woff2 |
+| M13 | `hannah-agent/.../facade/routes.ts:247-261`, `facade/index.ts:62-66` | SSE heartbeat cleared only on `abort`, but the mounted `Request` has no signal → one 15 s interval leaked per (re)connection. | clear in `cancel()`; wire an AbortSignal |
+| M14 | `facade/audit.ts:60,68` | `createWriteStream` without an `error` listener: disk full → unhandled `'error'` → process exit mid-task. | `.on('error')` or `appendFileSync` |
+| M15 | `hannah-agent/.../permission/index.ts:97,113` | `logInfo("evaluated"/"asking", {patterns})` writes full commands and paths, unredacted, to a 0644 log. | debug level / `PolicyRedact`; `0700` dir |
+| M16 | `facade/service.ts:379-382,443-446`, `store.ts:88,163-167`, `engine.ts:70,94` | Timers left on early returns; `#seq` never pruned; `directories` only deleted on cancel. | delete on the early-return paths; prune in `#finish` |
+| M17 | `hannah` launcher `:361-363,374,349` | "Port busy" is treated as "healthy": another app on 8002/3001/8005 → Hannah starts mute and `doctor` shows ✓; the early-exit ignores 8006 so a dead agent is never restarted. | probe `/health` like `vite_http_ok` |
+| M18 | `hannah` launcher `:26,121,151,171,244` | `ss`, `/proc`, `ip`, `hostname -I` don't exist on macOS though the header claims macOS: `up` is always false → duplicate services, `stop` finds nothing. | `lsof` fallback, or declare Linux-only |
+| M19 | `hannah` launcher `:37`, `settings.js:18` | `envval` truncates at `#` and goes through `xargs` (quote parsing): a token with `#`/`\` changes silently; the launcher reads the agent token from `.env` while the backend may take it from `settings.json` → 401 / "no hands". | parse `.env` properly; one source of truth |
+| M20 | `hannah-agent/.../policy/redact.ts:50-52` | `secret-assignment` needs `\s*[:=]` right after the name: JSON `"apiKey": "…"` is not caught; Groq `gsk_`, ElevenLabs, HF `hf_` have no rule. | broaden the rules |
+| M21 | `hannah-backend/src/pipeline/orchestrator.js:30,52,55` | `gestureUsed`, `recentUserMove`, `lastUserWords` keyed by session, never deleted (slow growth for the process lifetime). | clear on session delete |
+| M22 | `hannah-agent/.../facade/routes.ts:67`, `facade/index.ts:61` | `/health` (unauthenticated) lists the home path/username and macros; no body-size cap on task creation. | trim `/health`; cap the body |
+
+## 🔵 Low
+
+- `hannah-backend/src/server.js:30-32` — Helmet CSP disabled (`contentSecurityPolicy:false`).
+- `websocket.js:16` — no `maxPayload` (100 MiB default frame) and no `Origin` check on the upgrade.
+- `frameStore.js` + `visionLoop.js:98-104` — a `VISION_FRAME` without `VISION_START` is never cleared.
+- `useVision.js:28` — `startVision` twice → orphan interval + second camera stream.
+- `App.jsx:118-128` — if `MediaRecorder` throws (Safari) the tracks are never stopped (mic stays hot).
+- `useWebSocket.js:111,161` — `atob()` outside the `try`; `playChunk` fire-and-forget → unhandled rejection.
+- `useWebSocket.js:293-295` — WS URL hardcodes `ws://localhost:3001` instead of `DESKTOP.backendBase`.
+- `hannah-desktop/main.js:455,562,586` — dist server never closed; `second-instance`/`activate` create another; `settled` stays true.
+- `hannah-desktop/main.js:27-37` — relaunch: `spawn` failure after `app.exit(0)` = silent "doesn't start".
+- `hannah-desktop/package.json:117-119` — dead `allowScripts` key; builds unsigned (Gatekeeper "damaged", SmartScreen).
+- `Scene.jsx:86-93` — `OrbitControls` left in production (scroll/drag over the widget rotates the avatar).
+- `hannah` launcher `:169-174,121,452` — `belongs_to_project` kills any process whose cwd is in the repo; `port_pid` greedy match; `${HANNAH_ELECTRON_FLAGS}` unquoted (self-inflicted only); `facade/bus-events.ts:42,56` — wholesale `Set.clear()` at 4096 can double-count an in-flight part; `facade/index.ts:33` — `HANNAH_AGENT_AUDIT_RETENTION_DAYS=abc` → NaN → purge silently off.
 
 ---
 
-## Next steps (proposed batches)
-1. **Security (before exposing/publishing):** C1–C4 + the terminal gate + SSRF. ~1 session, almost all S.
-2. **Dead-code sweep:** avatars+19MB preload, toolSchemas/names, cmdAllowlist, trustModel, recall_memory,
-   Tauri, zombie state in the store. Trims ~500 lines + 19MB. Low risk.
-3. **React perf + Electron:** store selectors, `lib/api.js` (fixes the panels), the connect race, viseme timers.
-4. **Structural dedup:** `dataDir`/`jsonFile`, the API error wrapper, action tags from a single source,
-   `motionUtils`, the orchestrator's deterministic layer, `sidecar/common.py`.
-5. **Safety net:** ESLint in the 3 repos + table-driven tests for the regex/DANGER layer + fix for the test that
-   corrupts memory.
-6. **Docs:** consistency pass (README/CLAUDE.md/.env.example).
+## ✅ Done well (keep)
 
-*Tell me which batch to start with (or individual findings) and I'll apply it in separate commits as pedrochgdev.*
+- **No static directory** — only `test-client.html` is served; settings redacted on `GET`
+  (`hasApiKey`), keys never echoed to the browser, blank = keep; skill names sanitized before
+  `path.join`; avatar upload validates the glTF/VRM header and writes atomically.
+- `open_url` validates the protocol and uses `execFile` argv; `open_app` is a fixed allowlist keyed
+  by the model; create/delete intents `JSON.stringify` their targets; `DANGER` + confirmation on
+  destructive commands, with tests; parameterized SQL; 5 MB audio cap; per-turn `AbortController`.
+- **Agent text is sanitized before the persona sees it**; narration runs with `noActions`;
+  `keepOnlyTask` stops the 7B from inventing results; the façade never sends `always`, flips state
+  before awaiting cancel, silence = deny, high risk refuses voice; constant-time token compare;
+  redaction on every emit; CORS trimmed to loopback; mDNS off.
+- **No transcripts, LLM text or raw payloads in logs** (verified across gateway, llm, orchestrator).
+- Electron: `contextIsolation: true`, no `nodeIntegration`, minimal `contextBridge`, title locked,
+  single-instance lock, dist server on `127.0.0.1` + ephemeral port, OS-gated flags documented.
+- Frontend: no `dangerouslySetInnerHTML`/`innerHTML`/`localStorage`; all model/agent/user text
+  rendered as React text nodes; VAD/ORT assets local; lockfiles + `npm ci`; no `postinstall`.
+- Launcher: never kills a PGID, ancestor check, argv0-in-repo filter, `stop` verifies, `--dry-run`;
+  installer: `set -euo pipefail`, `GIT_TERMINAL_PROMPT=0`, never edits shell rc files, refuses
+  unsupported platforms.
+
+---
+
+## Proposed order (for approval)
+
+1. **Edges** — C1 + C2 + H3 + H7(a): UI secret, Vite on localhost by default, delete `/text`,
+   `trust proxy`, server-side `hud`. One PR, backend + frontend + launcher.
+2. **Agent surface** — C3 + C4 + H7(b) + H8 + H9 + M13–M16 + M20 + M22: generated token and engine
+   password, `mode` clamp, Content-Type/Origin checks, risk tiers, deny-list, leaks. One PR, agent +
+   launcher + installer.
+3. **Supply chain** — C5 + H10 + M6: checksums, safetensors/`weights_only`, idempotent installer,
+   AppImage actually used, CI hardening.
+4. **Electron** — H1 + H2 + M5 + M10 + low items in `main.js`.
+5. **Secrets at rest & in children** — H5 + M1 + M2 + M15.
+6. **Robustness** — H4 + H6 + M3 + M4 + M7 + M8 + M9 + M11 + M12 + M17–M19 + M21 + lows.
