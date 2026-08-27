@@ -289,10 +289,11 @@ Legend: ✅ fixed · 🟡 partly / mitigated · ⏸ deferred on purpose (would c
 | H3 SSRF through `[FETCH:]`/`fetch_url` | ✅ | `publicHostOnly()` (private/loopback/link-local/DNS), `redirect:'manual'` |
 | H4 Unbounded WS payloads | ✅ | `maxPayload` 6 MB, 5 MB buffer cap kept |
 | H5 Secrets inherited by pty / tool shells | ✅ | backend pty env scrubbed; agent tool shells `scrubbed()`; `env`/`printenv` out of the safe list |
-| H6 Vision/`TRIGGER_YOLO` turns could execute actions | ✅ | `processTextTurn(..., { noActions: true })` |
+| H6 Vision/`TRIGGER_YOLO` turns could execute actions | ✅ | `noActions` now gates **execution** in `processAndSendSegment` (backend `06e1719`), not just the prompt — the earlier ✅ rested on an incomplete justification, see *Corrections* below |
 | H7a/b Approval bypass (`by:"timeout"` allow; wire `mode` widening) | ✅ | façade: timeout can only deny; `HANNAH_AGENT_MAX_MODE` ceiling (launcher sets it from `AGENT_MODE`) |
 | H8 Risk tiers too narrow | ✅ | interpreters, `-c`/`-e`, redirection, `find -delete`, `truncate`, `git reset --hard`/`clean`, `tee`/`xargs` → high |
-| H9 Path denylist gaps | ✅ | `/proc/*/environ|cmdline|maps|mem`, `hannah-backend/data/**`, `memory.db`, `ui-token`; `$HOME`/`${HOME}`/`~user` expansion |
+| H8b `ssh` hid its remote payload from the danger rules *(not in the body above; found while closing H9)* | ✅ | `fragments()` now expands the remote command line (agent `a1b90d6`); `scp`/`rsync` still uncovered, noted in the code |
+| H9 Path denylist gaps | 🟡 | `/proc/*/environ|cmdline|maps|mem`, `hannah-backend/data/**`, `memory.db`, `ui-token`; `$HOME`/`${HOME}`/`~user` expansion. The `hannah-backend/data` rule is **inert in a development checkout**: `HANNAH_AGENT_DENY_DIRS` (agent `db51003`) + the launcher (`d1fceaa`) cover it, an agent started without the launcher does not — see *Corrections* |
 | H10 `torch.load(weights_only=False)` | ✅ | `weights_only=True` (both checkpoints verified to load) |
 | M1/M2 `data/` and DB permissions | ✅ | 0700 dir, 0600 files/db |
 | M3/M4 kdotool shell injection, `cat`/`ls` path quoting | ✅ | `run(bin, args)` via execFile; `JSON.stringify` paths |
@@ -316,5 +317,37 @@ Legend: ✅ fixed · 🟡 partly / mitigated · ⏸ deferred on purpose (would c
 | Low: CSP disabled, OrbitControls in prod, `useVision` double start, `MediaRecorder.stop` throw, `atob` on bad base64, relaunch spawn errors, second dist server | ✅ except CSP/OrbitControls (⏸, behavior/look) | frontend hooks, `main.js` |
 | Electron 33 EOL | ⏸ | upgrade needs validation of `--in-process-gpu` on the RTX 5070 Ti; separate task |
 | `--no-sandbox` | ⏸ | the renderer sandbox interacts with the GPU flags on this machine; needs a desktop test before changing |
+
+### Corrections (same day, after re-reading the code)
+
+**H6 was not closed by what the row claimed.** `{ noActions: true }` only reached
+`buildSystemPrompt` (`llm.js:63,88`): it stopped the prompt from *offering* the action protocol.
+The post hoc `[TASK:]`/`[MOVE:]` regexes in `processAndSendSegment` ran on every turn regardless,
+so a camera scene (`visionLoop.js:80`) or an agent narration event (`agentBridge.js:127`) — both of
+them text somebody else wrote — could still move the overlay and dispatch a real task to the hands.
+The flag now travels down and gates **execution**, never the stripping: the tag has to disappear
+either way or the TTS reads `[TASK: …]` out loud, and refused attempts are logged instead of
+dropped silently. `[MOTION:]` is deliberately left outside the gate (a gesture is not an action on
+the machine). Backend `06e1719` (`orchestrator.js` + `tests/unit/narrationGate.test.js`).
+
+**H9 had a residual the row hid.** `hannah-backend` is the name `site/install.sh` clones the
+backend into; a development checkout keeps the upstream `backend/`, so `/hannah-backend/data/` never
+matched there and `settings.json` — every provider key, in plaintext — stayed readable by `read` and
+`bash`. `memory.db` and `ui-token` were never affected: they are denied by their own basename rule,
+in any layout. Widening the pattern to any `backend/data` is not the fix (D3 leaves the workspace
+root at `/`, so it would hard-deny legitimate work in unrelated projects, and a hard deny is
+unappealable by design). Instead `HANNAH_AGENT_DENY_DIRS` takes a comma-separated list of absolute
+directories (agent `db51003`) and the launcher passes `$BACK/data`, the path it already resolved
+(`d1fceaa`). **Residual, open:** an agent started *without* the launcher, in a tree that is not
+named `hannah-backend/`, still has no coverage for that directory — nothing in the engine can infer
+it, so the installed layout is the only one protected by default.
+
+**H8b, new and not in the body above.** `fragments()` in `policy/commands.ts` expanded `sh -c`,
+heredocs, `xargs` and `find -exec`, but had no arm for `ssh`: in `ssh host rm -rf /` the command word
+was `ssh` and the remote payload was never read, so the danger rules scanned the line clean. (The
+sensitive-path layer was unaffected — it tokenizes the raw line, so `ssh host cat ~/.ssh/id_rsa` was
+already denied.) Agent `a1b90d6` skips the options and the destination and recurses the rest back
+through `fragments()`, so the existing rules apply to the remote side; the decision to judge remote
+arguments against local rules, and to leave `scp`/`rsync` uncovered, is written down in the code.
 
 Verification run: backend `npm test` 128 ✓ + lint · frontend vitest 10 ✓ + lint + build · agent `bun test test/hannah/` 261 ✓ + typecheck · desktop lint · `bash -n` launcher/installer · live Electron (dist mode) against the backend: session, WebSocket, camera permission, no CORS errors; traversal probes on the dist server refused.
