@@ -360,6 +360,31 @@ ls` was local execution wearing an innocent remote `ls`. Both are now denied thr
 `Policy.evaluate` path, and ordinary `-o` values (`BatchMode=yes`, a textbook `ProxyCommand` that
 really is an `ssh`) still pass.
 
+**KNOWN-GAPS #15, the layout drift.** `site/install.sh` clones the repos as `hannah-backend/`,
+`hannah-frontend/`, `hannah-motion-lab/`, `hannah-desktop/` and `hannah-agent/` beside the launcher;
+a development checkout keeps the upstream names (`backend/`, `frontend/`, `motion-model/`,
+`desktop/`, `agent/`) and puts the launcher *inside* `workspace/`, one level below its siblings.
+`workspace/hannah` hard-coded the installed name beside the script, so on a development machine
+`BACK`, `FRONT`, `LAB`, `DESK` and `AGENT` all pointed at directories that do not exist. That is
+wider than "the launcher starts nothing": `envval` reads `$BACK/.env`, so `AGENT_ENABLED` came back
+empty no matter what the real `.env` said and the hands could never start there — which means the
+H9 mitigation above (`HANNAH_AGENT_DENY_DIRS="$BACK/data"`, launcher `d1fceaa`) never ran at all on a
+development checkout, and would have passed `…/workspace/hannah-backend/data`, matching nothing, if
+it had. **H9's launcher coverage held only in an installed tree.** `sibling <installed> <development>`
+now tries both names beside the script and then in its parent, first hit wins, and names both when
+neither exists. The same drift had moved the process-ownership boundary: it was anchored at `$ROOT`,
+which in a development checkout is `workspace/`, so `hannah stop` reported its own backend as
+`AJENO al proyecto` and killed nothing (reproduced against a live backend on :3001 before the fix).
+The boundary is now the list of resolved repos, deliberately not `$ROOT/..`: the parent can be
+`$HOME`, and widening the kill radius there is what `argv0_in_project` exists to prevent. Backend
+`f6d959b` does the same for `sidecar:agent` and for the cross-repo fixtures, which is what makes the
+five `agentBridge.test.js` failures below go away; the launcher change lands with this note.
+
+Verification run, 2026-08-27 (M5.0.4): backend `npm test` **138 ✓, 0 failures** (was 133 ✓ / 5 ✗);
+with `HANNAH_AGENT_FIXTURES` pointed at a missing directory, 133 ✓ / **5 skipped** and the reason
+printed. `bash -n` on the launcher; `hannah doctor` resolves all five repos on this checkout, in a
+simulated installed tree, and names both candidates per repo when neither is present.
+
 Verification run, 2026-08-27 (this block): agent `bun test test/hannah/` 302 ✓, `bun test test/tool/`
 338 ✓, `turbo typecheck` 14/14, `oxlint` 0 errors · backend `npm test` 133 ✓ with 5 pre-existing
 failures in `agentBridge.test.js` (it reads `../../../hannah-agent/docs/fixtures/`, a sibling that

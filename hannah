@@ -11,14 +11,32 @@ set -u
 
 # Raíz del proyecto = carpeta de este script (portable).
 ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
-BACK="$ROOT/hannah-backend"
-FRONT="$ROOT/hannah-frontend"
-LAB="$ROOT/hannah-motion-lab"
+# Cada repo hermano tiene DOS nombres y puede estar en DOS sitios, y hay que probar los cuatro:
+#   - nombre: el instalador (site/install.sh) clona hannah-backend/, hannah-frontend/…; un
+#     checkout de desarrollo conserva los de upstream (backend/, frontend/, motion-model/…).
+#   - sitio: instalado, los hermanos quedan JUNTO a este script; en desarrollo el launcher vive
+#     dentro de workspace/, o sea un nivel por DEBAJO de ellos.
+# Gana el primero que exista. Sin esto, en un checkout de desarrollo BACK/FRONT/LAB/DESK/AGENT
+# apuntaban todos a carpetas inexistentes: cada `cd "$BACK"` fallaba y el servicio no arrancaba
+# sin decir por qué. `cd -P` porque la ruta se compara luego contra /proc/<pid>/cwd, que viene
+# con los symlinks ya resueltos.
+sibling() {
+  local inst="$1" dev="$2" d
+  for d in "$ROOT/$inst" "$ROOT/$dev" "$ROOT/../$inst" "$ROOT/../$dev"; do
+    [ -d "$d" ] && { (cd -P "$d" && pwd); return 0; }
+  done
+  echo "hannah: no encuentro el repo '$inst' (ni '$dev') junto a $ROOT ni en su padre" >&2
+  printf '%s' "$ROOT/$inst"   # ruta nominal: los mensajes siguientes siguen nombrando algo
+  return 1
+}
+BACK="$(sibling hannah-backend backend)"
+FRONT="$(sibling hannah-frontend frontend)"
+LAB="$(sibling hannah-motion-lab motion-model)"
 LOG="$ROOT/.hannah-launch.log"
 PROFILE="${HANNAH_PROFILE:-$HOME/.hannah-browser}"     # perfil Firefox/Zen (Gecko)
 MONITOR="${HANNAH_MONITOR:-}"                            # vacío = autodetectar el enfocado
 URL="http://localhost:5173/?overlay=1"
-DESK="$ROOT/hannah-desktop"
+DESK="$(sibling hannah-desktop desktop)"
 # Cómo se abre el overlay:
 #   app     (por defecto) -> la app Electron: widget flotante, se coloca sola, funciona igual
 #                            en GNOME/KDE/XFCE/Hyprland (fuerza XWayland).
@@ -63,7 +81,7 @@ for line in lines:
     print(v); break
 PY
 }
-AGENT="$ROOT/hannah-agent"
+AGENT="$(sibling hannah-agent agent)"
 agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 # El bearer entre backend y agente. Si el .env no lo trae se genera aquí y se escribe en el
 # .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente (AUDIT C3/C4).
@@ -78,7 +96,7 @@ agent_token() {
       sed -i "s|^#\?[[:space:]]*HANNAH_AGENT_TOKEN=.*|HANNAH_AGENT_TOKEN=$t|" "$BACK/.env"
     else printf '\nHANNAH_AGENT_TOKEN=%s\n' "$t" >>"$BACK/.env"; fi
     chmod 600 "$BACK/.env" 2>/dev/null
-    echo "[hannah] HANNAH_AGENT_TOKEN generado en hannah-backend/.env" >>"$LOG"
+    echo "[hannah] HANNAH_AGENT_TOKEN generado en $BACK/.env" >>"$LOG"
   fi
   printf '%s' "$t"
 }
@@ -108,6 +126,13 @@ doctor() {
   echo "  sesión     : $sess$([ -n "${WAYLAND_DISPLAY:-}" ] && echo ' (Wayland)')$([ -n "${DISPLAY:-}" ] && echo " · X disponible en \$DISPLAY=$DISPLAY")"
   printf '  herramientas:'
   for t in hyprctl kdotool wmctrl xdotool swaymsg; do has "$t" && printf ' %s' "$t"; done
+  echo
+  printf '  repos      :'
+  local r n d
+  for r in "backend:$BACK" "frontend:$FRONT" "motion:$LAB" "desktop:$DESK" "agent:$AGENT"; do
+    n="${r%%:*}"; d="${r#*:}"
+    if [ -d "$d" ]; then printf ' %s✓' "$n"; else printf ' %s✗(%s)' "$n" "$d"; fi
+  done
   echo
   printf '  servicios  :'
   for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 8006:agent 11434:ollama; do
@@ -159,9 +184,23 @@ doctor() {
 # de una corrida vieja ocupando 2.4GB de VRAM sin que nada lo registrara.
 SERVICES="3001:backend 5173:vite 8001:asr 8002:tts 8003:vision 8004:emage 8005:motion 8006:agent"
 
-# $ROOT entra en un ERE de pgrep: si la ruta de instalación tiene ( ) + . etc., el patrón se
+# El proyecto son los repos ya resueltos, NO todo lo que cuelga de $ROOT. En un checkout de
+# desarrollo $ROOT es workspace/ y los servicios corren desde sus hermanos, así que el límite
+# viejo no reconocía ni uno: `hannah stop` los daba por AJENOS y no apagaba nada. Se listan los
+# repos uno a uno en vez de subir a $ROOT/..: el padre puede ser $HOME, y ensanchar ahí el radio
+# de la matanza es justo lo que is_safe_target/argv0_in_project existen para impedir.
+PROJECT_DIRS=("$ROOT" "$BACK" "$FRONT" "$LAB" "$DESK" "$AGENT")
+in_project() {
+  local p="$1" d
+  for d in "${PROJECT_DIRS[@]}"; do case "$p" in "$d"|"$d"/*) return 0 ;; esac; done
+  return 1
+}
+# Las rutas entran en un ERE de pgrep: si la de instalación tiene ( ) + . etc., el patrón se
 # corrompe y el apagado deja de encontrar nada, en silencio.
-ROOT_RE="$(printf '%s' "$ROOT" | sed 's/[][\\.^$*+?(){}|]/\\&/g')"
+esc_re() { printf '%s' "$1" | sed 's/[][\\.^$*+?(){}|]/\\&/g'; }
+PROJECT_RE="$(for d in "${PROJECT_DIRS[@]}"; do printf '|%s' "$(esc_re "$d")"; done)"
+PROJECT_RE="(${PROJECT_RE#|})"
+DESK_RE="$(esc_re "$DESK")"
 
 port_pid() { ss -ltnp 2>/dev/null | grep ":$1 " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1; }
 
@@ -205,7 +244,7 @@ argv0_in_project() {
   [ -x "$a0" ] || a0="${a0%% *}"
   # tiene que existir de verdad: si no, un shell con cwd dentro del repo pasaría el filtro
   [ -x "$a0" ] || return 1
-  case "$a0" in "$ROOT"/*) return 0 ;; *) return 1 ;; esac
+  in_project "$a0"
 }
 
 # Para los servicios que escuchan un puerto nuestro alcanza con que CORRAN desde el repo
@@ -214,7 +253,7 @@ argv0_in_project() {
 belongs_to_project() {
   local pid="$1" cwd
   cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)"
-  case "$cwd" in "$ROOT"|"$ROOT"/*) return 0 ;; esac
+  in_project "$cwd" && return 0
   argv0_in_project "$pid"
 }
 
@@ -269,7 +308,7 @@ stop_all() {
   # Anclado a la ruta REAL de esta copia y limitado a procesos propios: el patrón suelto
   # "hannah-desktop/node_modules/electron" llegó a coincidir con un shell que solo mencionaba
   # esa cadena en sus argumentos.
-  for pid in $(pgrep -u "$(id -u)" -f "$ROOT_RE/hannah-desktop/node_modules/electron" 2>/dev/null); do
+  for pid in $(pgrep -u "$(id -u)" -f "$DESK_RE/node_modules/electron" 2>/dev/null); do
     argv0_in_project "$pid" || continue
     kill_tree "$pid" && { echo "  ventana (pid $pid)"; n=$((n+1)); }
   done
@@ -291,7 +330,7 @@ stop_all() {
     esac
   done
   # 3) sidecars huérfanos: ya no escuchan ningún puerto pero siguen reteniendo VRAM
-  for pid in $(pgrep -u "$(id -u)" -f "$ROOT_RE/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
+  for pid in $(pgrep -u "$(id -u)" -f "$PROJECT_RE/.*(sidecar|serve\.main|uvicorn)" 2>/dev/null); do
     argv0_in_project "$pid" || continue     # el ejecutable tiene que ser del repo
     kill_tree "$pid" && { echo "  sidecar huérfano (pid $pid)"; n=$((n+1)); }
   done
@@ -377,9 +416,9 @@ echo "[hannah] $(date) ROOT=$ROOT modo=$MODE" >>"$LOG"
 APPIMAGE="${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}"
 if [ "$MODE" = app ] && [ ! -x "$DESK/node_modules/electron/dist/electron" ]; then
   if [ -x "$APPIMAGE" ]; then
-    echo "[hannah] hannah-desktop sin node_modules: uso el AppImage $APPIMAGE" >>"$LOG"; MODE=appimage
+    echo "[hannah] $DESK sin node_modules: uso el AppImage $APPIMAGE" >>"$LOG"; MODE=appimage
   else
-    echo "[hannah] hannah-desktop sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"; MODE=browser
+    echo "[hannah] $DESK sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"; MODE=browser
   fi
 fi
 
@@ -478,7 +517,7 @@ for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sl
 warn_squatters 3001 8001 8002 8005 8006
 if [ -z "$READY" ]; then
   echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
-  echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en hannah-frontend?)." >&2
+  echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en $FRONT?)." >&2
   exit 1
 fi
 
