@@ -37,6 +37,20 @@ has() { command -v "$1" >/dev/null 2>&1; }
 envval() { sed -n "s/^[[:space:]]*$1=\([^#]*\).*/\1/p" "$BACK/.env" 2>/dev/null | head -1 | tr -d "\"'" | xargs; }
 AGENT="$ROOT/hannah-agent"
 agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
+# El bearer entre backend y agente. Si el .env no lo trae se genera aquí y se escribe en el
+# .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente (AUDIT C3/C4).
+agent_token() {
+  local t; t="$(envval HANNAH_AGENT_TOKEN)"
+  if [ -z "$t" ]; then
+    t="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    if grep -q '^#\?[[:space:]]*HANNAH_AGENT_TOKEN=' "$BACK/.env" 2>/dev/null; then
+      sed -i "s|^#\?[[:space:]]*HANNAH_AGENT_TOKEN=.*|HANNAH_AGENT_TOKEN=$t|" "$BACK/.env"
+    else printf '\nHANNAH_AGENT_TOKEN=%s\n' "$t" >>"$BACK/.env"; fi
+    chmod 600 "$BACK/.env" 2>/dev/null
+    echo "[hannah] HANNAH_AGENT_TOKEN generado en hannah-backend/.env" >>"$LOG"
+  fi
+  printf '%s' "$t"
+}
 # La key del modelo del agente: lo que el usuario guardó en el panel ⚙ (data/settings.json)
 # manda sobre el .env — es el mismo orden de precedencia que usa el backend.
 agent_key() {
@@ -367,7 +381,11 @@ if agent_on; then
   if ! has bun; then echo "[hannah] AGENT_ENABLED=true pero falta bun (https://bun.sh) — sin manos" >>"$LOG"
   elif [ ! -d "$AGENT" ]; then echo "[hannah] AGENT_ENABLED=true pero no está $AGENT — sin manos" >>"$LOG"
   else
-    up 8006 || ( cd "$AGENT" && export HANNAH_AGENT_TOKEN="$(envval HANNAH_AGENT_TOKEN)" "$(agent_key_var)=$(agent_key)" \
+    # El mismo secreto protege la fachada (HANNAH_AGENT_TOKEN) y la API nativa del motor
+    # (HANNAH_AGENT_SERVER_PASSWORD, basic auth); el techo de modo lo fija AGENT_MODE del .env.
+    up 8006 || ( cd "$AGENT" && tok="$(agent_token)" \
+      && export HANNAH_AGENT_TOKEN="$tok" HANNAH_AGENT_SERVER_PASSWORD="$tok" \
+                HANNAH_AGENT_MAX_MODE="$(envval AGENT_MODE)" "$(agent_key_var)=$(agent_key)" \
       && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
