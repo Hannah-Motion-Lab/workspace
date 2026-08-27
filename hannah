@@ -5,6 +5,9 @@
 # y lo coloca flotante/encima. En Hyprland usa hyprctl; en otros entornos degrada a
 # ventana normal (el adaptador X11/otros se añade aparte).
 set -u
+# Solo Linux: usa ss, /proc, ip y los adaptadores X11/Hyprland. En macOS/Windows la app se
+# arranca a mano (ver README); antes el launcher "funcionaba" ahí a medias y duplicaba servicios.
+[ "$(uname -s)" = Linux ] || { echo "hannah: este launcher es solo para Linux (macOS/Windows: ver README)" >&2; exit 1; }
 
 # Raíz del proyecto = carpeta de este script (portable).
 ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
@@ -24,6 +27,16 @@ DESK="$ROOT/hannah-desktop"
 MODE="${HANNAH_MODE:-app}"
 
 up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
+# ¿Hay ALGO nuestro respondiendo ahí? "Puerto ocupado" no es "servicio sano": otra app en 8002
+# dejaba a Hannah muda con el doctor en ✓. Cada servicio tiene su ruta de salud.
+health_path() { case "$1" in 3001) echo /api/v1/health ;; 8006) echo /hannah/v0/health ;; 11434) echo /api/tags ;; 5173) echo / ;; *) echo /health ;; esac; }
+healthy() { curl -sf -o /dev/null -m 2 "http://127.0.0.1:$1$(health_path "$1")" 2>/dev/null || curl -skf -o /dev/null -m 2 "https://127.0.0.1:$1$(health_path "$1")" 2>/dev/null; }
+# Puertos ocupados por algo que NO responde como el servicio esperado: se avisa en vez de callar.
+warn_squatters() {
+  local p
+  for p in "$@"; do up "$p" && ! healthy "$p" && echo "[hannah] OJO: el puerto $p está ocupado por otra cosa (no responde $(health_path "$p")) — ese servicio no arrancó" >>"$LOG"; done
+  return 0
+}
 # El overlay necesita Vite en HTTP (HANNAH_HTTP=1). Si hay un Vite en 5173 pero en HTTPS
 # (p.ej. `npm run dev` a mano), el puerto figura ocupado y antes nos quedábamos esperando
 # 60s a una URL http que nunca responde. Esto lo detecta y lo dice.
@@ -34,13 +47,31 @@ vite_http_ok() { curl -sf -o /dev/null -m 2 "http://localhost:5173/" 2>/dev/null
 
 has() { command -v "$1" >/dev/null 2>&1; }
 # Una variable del .env del backend (sin exportar todo: solo la que se pide). Vacío si no está.
-envval() { sed -n "s/^[[:space:]]*$1=\([^#]*\).*/\1/p" "$BACK/.env" 2>/dev/null | head -1 | tr -d "\"'" | xargs; }
+# Lee KEY del .env como lo hace dotenv: comillas simples/dobles respetadas (un token con `#`
+# o `\` llega entero), comentario solo tras un espacio en valores sin comillas.
+envval() {
+  python3 - "$BACK/.env" "$1" 2>/dev/null <<'PY'
+import re, sys
+try: lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+except OSError: sys.exit(0)
+for line in lines:
+    m = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
+    if not m or m.group(1) != sys.argv[2]: continue
+    v = m.group(2).strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'": v = v[1:-1]
+    else: v = re.split(r"\s+#", v, 1)[0].strip()
+    print(v); break
+PY
+}
 AGENT="$ROOT/hannah-agent"
 agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 # El bearer entre backend y agente. Si el .env no lo trae se genera aquí y se escribe en el
 # .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente (AUDIT C3/C4).
 agent_token() {
-  local t; t="$(envval HANNAH_AGENT_TOKEN)"
+  local t
+  # Misma precedencia que el backend: lo guardado en el panel ⚙ (settings.json) manda sobre el .env.
+  t="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('agent',{}).get('token',''))" "$BACK/data/settings.json" 2>/dev/null)"
+  [ -n "$t" ] || t="$(envval HANNAH_AGENT_TOKEN)"
   if [ -z "$t" ]; then
     t="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     if grep -q '^#\?[[:space:]]*HANNAH_AGENT_TOKEN=' "$BACK/.env" 2>/dev/null; then
@@ -80,7 +111,7 @@ doctor() {
   echo
   printf '  servicios  :'
   for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 8006:agent 11434:ollama; do
-    up "${p%%:*}" && printf ' %s✓' "${p##*:}" || printf ' %s✗' "${p##*:}"
+    if healthy "${p%%:*}"; then printf ' %s✓' "${p##*:}"; elif up "${p%%:*}"; then printf ' %s⚠(puerto ocupado por otra cosa)' "${p##*:}"; else printf ' %s✗' "${p##*:}"; fi
   done
   echo; echo
   if agent_on; then
@@ -364,7 +395,7 @@ trap 'flock -u 9 2>/dev/null' EXIT   # salir por cualquier vía suelta el candad
 # abierta pero muda, y Super+H no volvía a levantar nada. Se comprueban los que de verdad
 # hacen falta para que hable: backend, Vite (y que hable HTTP, no HTTPS) y el TTS.
 EXIST="$(hannah_addr)"
-if [ "$MODE" != services ] && [ -n "$EXIST" ] && up 3001 && up 5173 && up 8002 && vite_http_ok; then
+if [ "$MODE" != services ] && [ -n "$EXIST" ] && healthy 3001 && up 5173 && healthy 8002 && vite_http_ok && { ! agent_on || healthy 8006; }; then
   [ "$MODE" = browser ] && place_window "$EXIST"
   has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
   exit 0
@@ -421,7 +452,8 @@ flock -u 9 2>/dev/null
 # red en el navegador (el avatar se dibuja con la GPU de ese equipo; el backend sigue solo en
 # 127.0.0.1 porque Vite le hace de proxy).
 if [ "$MODE" = services ]; then
-  for _ in $(seq 1 90); do up 3001 && up 5173 && up 8002 && break; sleep 1; done
+  for _ in $(seq 1 90); do healthy 3001 && up 5173 && healthy 8002 && break; sleep 1; done
+  warn_squatters 3001 8001 8002 8005 8006
   ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
   [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   proto=https; vite_http_ok && proto=http
@@ -437,6 +469,7 @@ fi
 # indistinguible de "la app no arranca". Mejor decirlo y salir.
 READY=""
 for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sleep 1; done
+warn_squatters 3001 8001 8002 8005 8006
 if [ -z "$READY" ]; then
   echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
   echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en hannah-frontend?)." >&2

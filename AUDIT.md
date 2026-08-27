@@ -270,3 +270,51 @@ unauthenticated GitHub API (60/h) dies on shared NATs; an empty `asset()` yields
 4. **Electron** — H1 + H2 + M5 + M10 + low items in `main.js`.
 5. **Secrets at rest & in children** — H5 + M1 + M2 + M15.
 6. **Robustness** — H4 + H6 + M3 + M4 + M7 + M8 + M9 + M11 + M12 + M17–M19 + M21 + lows.
+
+---
+
+## Status — 2026-08-27 (fixes applied, behavior-preserving, local commits only)
+
+Legend: ✅ fixed · 🟡 partly / mitigated · ⏸ deferred on purpose (would change behavior or needs the user's desktop to validate) · ➖ accepted as is.
+
+| Item | Status | Where |
+|---|---|---|
+| C1 Vite on `0.0.0.0` exposes the API/WS to the LAN | ✅ | `vite.config.js` (localhost unless `HANNAH_LAN=1`) + UI token for non-loopback (`api/auth.js`) |
+| C2 `POST /text` unauthenticated text injection | ✅ | route removed; WS upgrade + `/api/v1` behind `requireUiAuth` |
+| C3 Agent façade reachable without token | ✅ | launcher generates `HANNAH_AGENT_TOKEN` into `.env`; installer seeds it; façade refuses `Origin`/non-JSON |
+| C4 Engine's native API unauthenticated | ✅ | launcher exports `HANNAH_AGENT_SERVER_PASSWORD` (same secret) |
+| C5 `curl \| bash` installer runs partial scripts / unverified downloads | ✅ | `main()` wrapper, `.part` + `SHA256SUMS` verification (CI now publishes it), vendor installers fetched to a file first |
+| H1 `webSecurity:false` in Electron | ✅ | on again; backend CORS allows any loopback origin — verified live (session + WS + camera OK) |
+| H2 `window.open`/navigation/permissions unrestricted | ✅ | `setWindowOpenHandler`→`shell.openExternal`, `will-navigate` deny, permissions only `media`/clipboard on app origins |
+| H3 SSRF through `[FETCH:]`/`fetch_url` | ✅ | `publicHostOnly()` (private/loopback/link-local/DNS), `redirect:'manual'` |
+| H4 Unbounded WS payloads | ✅ | `maxPayload` 6 MB, 5 MB buffer cap kept |
+| H5 Secrets inherited by pty / tool shells | ✅ | backend pty env scrubbed; agent tool shells `scrubbed()`; `env`/`printenv` out of the safe list |
+| H6 Vision/`TRIGGER_YOLO` turns could execute actions | ✅ | `processTextTurn(..., { noActions: true })` |
+| H7a/b Approval bypass (`by:"timeout"` allow; wire `mode` widening) | ✅ | façade: timeout can only deny; `HANNAH_AGENT_MAX_MODE` ceiling (launcher sets it from `AGENT_MODE`) |
+| H8 Risk tiers too narrow | ✅ | interpreters, `-c`/`-e`, redirection, `find -delete`, `truncate`, `git reset --hard`/`clean`, `tee`/`xargs` → high |
+| H9 Path denylist gaps | ✅ | `/proc/*/environ|cmdline|maps|mem`, `hannah-backend/data/**`, `memory.db`, `ui-token`; `$HOME`/`${HOME}`/`~user` expansion |
+| H10 `torch.load(weights_only=False)` | ✅ | `weights_only=True` (both checkpoints verified to load) |
+| M1/M2 `data/` and DB permissions | ✅ | 0700 dir, 0600 files/db |
+| M3/M4 kdotool shell injection, `cat`/`ls` path quoting | ✅ | `run(bin, args)` via execFile; `JSON.stringify` paths |
+| M5 dist server path traversal | ✅ | containment + decode try/catch + single server — probed (`/../..`, `%2e%2e`, `%zz`) |
+| M6 CI: mutable tags, persisted credentials, broad permissions | ✅ | SHA-pinned actions, `persist-credentials:false`, `permissions: contents: read` (release job `write`) |
+| M7 Audio decode race / post-barge-in chunk | ✅ | serialized decode chain + generation counter |
+| M8 No ErrorBoundary around the avatar | ✅ | `AvatarBoundary` → factory avatar fallback, app stays alive |
+| M9 Previous avatar never disposed | 🟡 | `deepDispose` + `useGLTF.clear` on real swaps (StrictMode-safe); factory preload kept (startup speed) |
+| M10 Cursor poll forks tools every 150 ms | ✅ | no overlapping polls, none while hidden/minimized (interval unchanged so gaze stays smooth) |
+| M11 Mic/camera on at connect without consent | ⏸ | behavior change (first-run consent UI) — decide separately |
+| M12 Google Fonts at launch | ⏸ | bundling changes the look; do together with the next design pass |
+| M13/M14 SSE timer leak, audit stream error | ✅ | `cancel()` clears heartbeat; `stream.on('error')`, 0600 |
+| M15 Permission log writes commands unredacted | ⏸ | engine-side log level; low priority for a single-user box |
+| M16 Timers/`#seq` growth in service/store | ⏸ | bounded in practice (one task at a time); revisit with the agent refactor |
+| M17 Port busy ≠ healthy | ✅ | `healthy()` probes per service, `doctor` shows ⚠ for squatters, warning in the log |
+| M18 macOS paths in launcher | ✅ | launcher declares itself Linux-only (fails fast with a pointer to the README) |
+| M19 `.env` parsing / token source | ✅ | dotenv-like `envval` (quotes, `#`), agent token: settings.json → `.env` → generated |
+| M20 Redaction misses JSON keys and `gsk_`/`hf_` | ✅ | new rules `secret-json-field`, `provider-key` |
+| M21 Per-session maps never cleared | ✅ | `conversationManager.onDelete` hook clears them |
+| M22 `/health` verbosity, body cap | 🟡 | 256 KB body cap; `/health` content unchanged (the backend relies on it) |
+| Low: CSP disabled, OrbitControls in prod, `useVision` double start, `MediaRecorder.stop` throw, `atob` on bad base64, relaunch spawn errors, second dist server | ✅ except CSP/OrbitControls (⏸, behavior/look) | frontend hooks, `main.js` |
+| Electron 33 EOL | ⏸ | upgrade needs validation of `--in-process-gpu` on the RTX 5070 Ti; separate task |
+| `--no-sandbox` | ⏸ | the renderer sandbox interacts with the GPU flags on this machine; needs a desktop test before changing |
+
+Verification run: backend `npm test` 128 ✓ + lint · frontend vitest 10 ✓ + lint + build · agent `bun test test/hannah/` 261 ✓ + typecheck · desktop lint · `bash -n` launcher/installer · live Electron (dist mode) against the backend: session, WebSocket, camera permission, no CORS errors; traversal probes on the dist server refused.
