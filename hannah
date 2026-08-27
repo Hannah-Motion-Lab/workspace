@@ -343,9 +343,13 @@ print(m['x'],m['y'],m['width'],m['height'])")"
 echo "[hannah] $(date) ROOT=$ROOT modo=$MODE" >>"$LOG"
 
 # Si se pidió la app pero no está instalada, no fallar: degradar al navegador y decirlo.
+APPIMAGE="${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}"
 if [ "$MODE" = app ] && [ ! -x "$DESK/node_modules/electron/dist/electron" ]; then
-  echo "[hannah] hannah-desktop sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"
-  MODE=browser
+  if [ -x "$APPIMAGE" ]; then
+    echo "[hannah] hannah-desktop sin node_modules: uso el AppImage $APPIMAGE" >>"$LOG"; MODE=appimage
+  else
+    echo "[hannah] hannah-desktop sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"; MODE=browser
+  fi
 fi
 
 # Instancia única.
@@ -471,6 +475,12 @@ if [ "$MODE" = app ]; then
   # de instancia única, así que si ya hay una Hannah en el escritorio, `./hannah stop` antes.
   # shellcheck disable=SC2086
   ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start -- ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
+elif [ "$MODE" = appimage ]; then
+  # El AppImage del instalador (sin node_modules en hannah-desktop). Usa el Vite que acaba de
+  # levantar el launcher igual que la app de desarrollo; se relanza solo con sus flags.
+  echo "[hannah] abriendo el AppImage" >>"$LOG"
+  # shellcheck disable=SC2086
+  ( HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid "$APPIMAGE" ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
 else
   open_browser
   # ── Colocar la ventana encima ─────────────────────────────────────────────
