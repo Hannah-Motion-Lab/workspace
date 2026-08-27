@@ -418,9 +418,15 @@ if agent_on; then
   else
     # El mismo secreto protege la fachada (HANNAH_AGENT_TOKEN) y la API nativa del motor
     # (HANNAH_AGENT_SERVER_PASSWORD, basic auth); el techo de modo lo fija AGENT_MODE del .env.
+    # HANNAH_AGENT_DENY_DIRS: en data/ viven settings.json (las claves de los proveedores en
+    # claro) y ui-token, y el agente no puede leerlos ni con bash. La regla que el motor ya trae
+    # nombra hannah-backend/data, un NOMBRE de carpeta que solo existe en el layout instalado
+    # (site/install.sh); en un checkout de desarrollo la carpeta es backend/ y la regla no
+    # dispara. Pasamos la ruta que este launcher ya resolvió, correcta en los dos layouts.
     up 8006 || ( cd "$AGENT" && tok="$(agent_token)" \
       && export HANNAH_AGENT_TOKEN="$tok" HANNAH_AGENT_SERVER_PASSWORD="$tok" \
                 HANNAH_AGENT_MAX_MODE="$(envval AGENT_MODE)" "$(agent_key_var)=$(agent_key)" \
+                HANNAH_AGENT_DENY_DIRS="$BACK/data" \
       && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
