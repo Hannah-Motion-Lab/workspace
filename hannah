@@ -385,7 +385,7 @@ if up 5173; then
 elif [ "$MODE" = services ]; then
   # Sin ventana aquí: Vite en HTTPS para que mic y cámara funcionen desde otro equipo de la
   # red (un origen que no es localhost necesita HTTPS para getUserMedia).
-  ( cd "$FRONT" && nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
+  ( cd "$FRONT" && HANNAH_LAN=1 nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
 else
   ( cd "$FRONT" && HANNAH_HTTP=1 nohup npm run dev >>"$LOG" 2>&1 & ) 9>&-
 fi
@@ -403,8 +403,11 @@ if [ "$MODE" = services ]; then
   ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
   [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   proto=https; vite_http_ok && proto=http
-  echo "Hannah lista, sin ventana. Desde otro equipo de la red: ${proto}://${ip:-<ip-de-esta-maquina>}:5173  (acepta el certificado)."
-  echo "Parar todo: ./hannah stop"
+  # El token de la UI: otro equipo lo necesita (el backend lo exige a todo lo que no es loopback).
+  tok="$(envval HANNAH_UI_TOKEN)"; [ -n "$tok" ] || tok="$(cat "$BACK/data/ui-token" 2>/dev/null)"
+  echo "Hannah lista, sin ventana. Desde otro equipo de la red (acepta el certificado):"
+  echo "  ${proto}://${ip:-<ip-de-esta-maquina>}:5173/?token=${tok:-<data/ui-token>}"
+  echo "El token va en la URL solo la primera vez (queda en la pestaña). Parar todo: ./hannah stop"
   exit 0
 fi
 
