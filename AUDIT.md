@@ -350,4 +350,21 @@ already denied.) Agent `a1b90d6` skips the options and the destination and recur
 through `fragments()`, so the existing rules apply to the remote side; the decision to judge remote
 arguments against local rules, and to leave `scp`/`rsync` uncovered, is written down in the code.
 
+**H8b, second pass.** Probing the new arm found two shapes it still let through, both fixed in agent
+`50390b7`. `ssh host -- sudo reboot` scanned clean because `--` became the command word, and since
+the argument rules index from `t[0]` the same marker also disarmed `-- rm -rf /`; the marker is now
+skipped in `commandWord` and in the normalization rather than only inside the `ssh` arm, because
+`sudo -- rm -rf /` had the identical hole. And `ProxyCommand`/`LocalCommand` do not run on the far
+host at all: `ssh` runs them *here* to open the connection, so `ssh -o ProxyCommand='rm -rf /' host
+ls` was local execution wearing an innocent remote `ls`. Both are now denied through the full
+`Policy.evaluate` path, and ordinary `-o` values (`BatchMode=yes`, a textbook `ProxyCommand` that
+really is an `ssh`) still pass.
+
+Verification run, 2026-08-27 (this block): agent `bun test test/hannah/` 302 ✓, `bun test test/tool/`
+338 ✓, `turbo typecheck` 14/14, `oxlint` 0 errors · backend `npm test` 133 ✓ with 5 pre-existing
+failures in `agentBridge.test.js` (it reads `../../../hannah-agent/docs/fixtures/`, a sibling that
+does not exist in a development checkout: KNOWN-GAPS #15, untouched here) · `bash -n` on the
+launcher. Note for whoever runs these next: a **single-file** `jest` invocation never exits in this
+repo (open handles, every file, not only the new one), so it must be run through `npm test`.
+
 Verification run: backend `npm test` 128 ✓ + lint · frontend vitest 10 ✓ + lint + build · agent `bun test test/hannah/` 261 ✓ + typecheck · desktop lint · `bash -n` launcher/installer · live Electron (dist mode) against the backend: session, WebSocket, camera permission, no CORS errors; traversal probes on the dist server refused.
