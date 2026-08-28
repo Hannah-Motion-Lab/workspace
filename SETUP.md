@@ -362,11 +362,12 @@ curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash
 irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
 ```
 
-Don't want Ollama (no 4 GB local model)? Run the same command with `HANNAH_BRAIN=cloud`
-(`… | HANNAH_BRAIN=cloud bash`, or `$env:HANNAH_BRAIN='cloud'; irm … | iex` on Windows): Ollama
-and the local models are skipped, `VISION_PROVIDER=off` and `MEMORY_RECALL=false` are set, and
-you pick Groq / OpenAI / Anthropic / OpenRouter and paste a key in the ⚙ panel → Brain. The same
-flag works with the Linux installer.
+None of the installers touches Ollama or a language model. The **first time the overlay opens,
+Hannah asks where she should think**: *on this PC* (she detects an Ollama you already have, or
+installs one in your user folder and pulls `qwen2.5:7b`, `moondream` and `nomic-embed-text` with a
+progress bar, if you press the button) or *a provider* (Groq / OpenAI / Anthropic / OpenRouter,
+paste a key). Vision and memory recall follow that choice (on with a local brain, off with a
+provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the status behind it.
 
 Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
 voice and listening sidecars on the CPU, the backend and the overlay app; `hannah stop` and
