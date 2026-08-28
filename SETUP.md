@@ -362,6 +362,12 @@ curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash
 irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
 ```
 
+Don't want Ollama (no 4 GB local model)? Run the same command with `HANNAH_BRAIN=cloud`
+(`… | HANNAH_BRAIN=cloud bash`, or `$env:HANNAH_BRAIN='cloud'; irm … | iex` on Windows): Ollama
+and the local models are skipped, `VISION_PROVIDER=off` and `MEMORY_RECALL=false` are set, and
+you pick Groq / OpenAI / Anthropic / OpenRouter and paste a key in the ⚙ panel → Brain. The same
+flag works with the Linux installer.
+
 Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
 voice and listening sidecars on the CPU, the backend and the overlay app; `hannah stop` and
 `hannah doctor` work as on Linux. What differs from Linux: the voice runs on the CPU (~1–2 s per
