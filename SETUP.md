@@ -388,3 +388,58 @@ postinstall: `npm rebuild electron` or `npm install electron --force`.
 
 **Everything is slow** → check whether the sidecars are on CPU: `curl -s localhost:8002/health` says
 the provider. Without CUDA, the TTS is the bottleneck.
+
+## macOS and Windows
+
+Each has its own one-command install — everything lands in your user folder, **no admin**,
+and anything you already have (git, node ≥ 20, uv, bun, ollama) is reused instead of reinstalled:
+
+```bash
+# macOS (Apple Silicon or Intel) — needs git (Xcode Command Line Tools)
+curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash
+```
+```powershell
+# Windows 10/11 (x64), in PowerShell
+irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
+```
+
+None of the installers touches Ollama or a language model. The **first time the overlay opens,
+Hannah asks where she should think**: *on this PC* (she detects an Ollama you already have, or
+installs one in your user folder and pulls `qwen2.5:7b`, `moondream` and `nomic-embed-text` with a
+progress bar, if you press the button) or *a provider* (Groq / OpenAI / Anthropic / OpenRouter,
+paste a key). Vision and memory recall follow that choice (on with a local brain, off with a
+provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the status behind it.
+
+Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
+voice and listening sidecars on the CPU, the gesture model (`MOTION_DEVICE=auto`: CUDA if there
+is one, else Apple's MPS, else the CPU — slower but never skipped), the backend and the overlay
+app; `hannah stop` and `hannah doctor` work as on Linux. The Linux `hannah` launcher itself is
+Linux-only (it leans on `ss`, `/proc`, `ip` and the X11/Hyprland adapters).
+
+If you would rather do it by hand, this is what the installers do — the **overlay app** is built
+for you ([releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
+`Hannah-<version>-mac-arm64.dmg` (Apple Silicon), `-mac-x64.dmg` (Intel), `-win-x64.exe`), and
+the rest of the stack goes in your user folder:
+
+- **Node 20+** via [nvm](https://github.com/nvm-sh/nvm), **Python 3.12** via [uv](https://docs.astral.sh/uv/)
+  (`uv venv .venv --python 3.12`), **bun** for the hands.
+- **Ollama**: the desktop app. On macOS drag it to `~/Applications` (not `/Applications`) and
+  decline the "install CLI" step (that is the one prompt that wants admin); the binary is at
+  `~/Applications/Ollama.app/Contents/Resources/ollama`. Then `ollama pull qwen2.5:7b`.
+- **Sidecars on CPU**: `sidecar/requirements.txt` pins `onnxruntime-gpu`, which has no macOS
+  wheel — swap it for `onnxruntime` (`sed 's/onnxruntime-gpu==.*/onnxruntime/' requirements.txt > req-cpu.txt`)
+  and run the TTS with `TTS_DEVICE=cpu`. Whisper runs on CPU as is. Expect ~1–2 s per sentence
+  for the voice on Apple Silicon.
+- **Gestures on any device**: `hannah-motion-lab` with `requirements-serve.txt` (torch from PyPI on
+  macOS, from the cu128 or cpu index elsewhere) and the weights from the `models` release; the
+  server picks CUDA → MPS → CPU by itself.
+- **Run it** (four terminals from `hannah-backend`): `TTS_DEVICE=cpu npm run sidecar:tts`,
+  `npm run sidecar:asr`, `npm run dev`; then `HANNAH_HTTP=1 npm run dev` in `hannah-frontend`
+  and open the overlay app (or `HANNAH_DEV=1 npm start` in `hannah-desktop` to use the dev server).
+- **Unsigned builds.** macOS quarantines the download and says the app "can't be opened":
+  `xattr -dr com.apple.quarantine ~/Applications/Hannah.app` fixes it without admin (you own the
+  file). Windows SmartScreen: "More info → Run anyway". An app you build yourself
+  (`npm run build:mac` / `build:win` in `hannah-desktop`) carries no quarantine at all.
+- The overlay talks to the backend at `http://localhost:3001`, so everything above must be
+  running on the same machine. Floating on top and moving between monitors use Electron's own
+  API there (no compositor tools needed).

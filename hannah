@@ -563,7 +563,8 @@ _drift="$(catalog_check)"
 has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 & } 9>&-
 up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & ) 9>&-
 up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & ) 9>&-
-up 8005 || ( cd "$LAB"  && nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
+# gestos: CUDA si hay, si no CPU (MOTION_DEVICE=auto); PYTHONPATH por si el venv no tiene el paquete editable
+up 8005 || ( cd "$LAB"  && MOTION_DEVICE="${MOTION_DEVICE:-auto}" PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
 # Las "manos" (hannah-agent, :8006): SOLO si AGENT_ENABLED=true en el .env del backend. Se
 # arranca ANTES que el backend para que su health-check inicial lo encuentre vivo.
 if agent_on; then
