@@ -460,11 +460,15 @@ written up here, because this is where this project keeps them and a roadmap ent
 is not a substitute; the rest are correctness and sit in `agent/docs/ROADMAP.md`
 Phase 5, each beside the claim it falsified.
 
-Three of the defects were things that had already been **asserted**: the roadmap's
-own delivery rule, the `describe` block in `senseBridge.test.js` that said it
-proved that rule, and M5.1.5's acceptance line, which asks for a rendering test of
-`degraded` — a health counter, not a state, and hard-coded to 0 for this whole
-phase. That is the pattern worth naming. None of it was hidden; it was *claimed*.
+The finding worth naming on its own: **one claim was written in three places and
+was false in all three.** *"A trip binds to the session that armed it, never to
+the newest one"* was asserted by backend `91c232c`'s commit message, by the
+`describe` title of the very test meant to prove it, and by
+`agent/docs/ROADMAP.md` — while `detachSession()` did the opposite. Two acceptance
+lines also failed to hold: M5.1.2's was true at arm time and false at sample time,
+and M5.1.5's asks for a rendering test of `degraded`, which is a health counter,
+not a state, and is hard-coded to 0 for this whole phase. None of it was hidden.
+It was claimed.
 
 ### V1 · A trip was narrated to whoever had the newest socket, not to whoever armed the watch
 `hannah-backend/src/pipeline/senseBridge.js` — `detachSession()`, `attachSession()`.
