@@ -10,7 +10,18 @@ $Root = $PSScriptRoot
 $Back = Join-Path $Root 'hannah-backend'
 $Agent = Join-Path $Root 'hannah-agent'
 $Lab = Join-Path $Root 'hannah-motion-lab'
-$App = if ($env:HANNAH_APP) { $env:HANNAH_APP } else { Join-Path $env:LOCALAPPDATA 'Programs\Hannah\Hannah.exe' }
+function Find-HannahExe {
+  $default = Join-Path $env:LOCALAPPDATA 'Programs\Hannah\Hannah.exe'
+  if (Test-Path $default) { return $default }
+  foreach ($k in (Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue)) {
+    $v = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
+    if ($v.DisplayName -like 'Hannah*' -and $v.InstallLocation) { $c = Join-Path $v.InstallLocation 'Hannah.exe'; if (Test-Path $c) { return $c } }
+  }
+  $hit = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'Hannah.exe' -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($hit) { return $hit.FullName }
+  return $default
+}
+$App = if ($env:HANNAH_APP) { $env:HANNAH_APP } else { Find-HannahExe }
 $Log = Join-Path $Root '.hannah-launch.log'
 $env:Path = "$Root\.tools\git\cmd;$Root\.tools\node;$Root\.tools\ollama;$env:LOCALAPPDATA\Programs\Ollama;$env:USERPROFILE\.local\bin;$env:USERPROFILE\.bun\bin;$env:Path"
 
