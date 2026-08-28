@@ -10,7 +10,8 @@ set -u
 [ "$(uname -s)" = Linux ] || { echo "hannah: este launcher es solo para Linux (macOS/Windows: ver README)" >&2; exit 1; }
 
 # Raíz del proyecto = carpeta de este script (portable).
-ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"   # catalog_check relee este archivo
+ROOT="$(cd "$(dirname "$SELF")" && pwd)"
 # Cada repo hermano tiene DOS nombres y puede estar en DOS sitios, y hay que probar los cuatro:
 #   - nombre: el instalador (site/install.sh) clona hannah-backend/, hannah-frontend/…; un
 #     checkout de desarrollo conserva los de upstream (backend/, frontend/, motion-model/…).
@@ -43,6 +44,50 @@ DESK="$(sibling hannah-desktop desktop)"
 #   browser               -> el frontend en un navegador en modo-app; más liviano, pero para
 #                            que flote depende de hyprctl/wmctrl y en Wayland nativo no puede.
 MODE="${HANNAH_MODE:-app}"
+
+# ── El catálogo de servicios: UNA sola lista ──────────────────────────────────
+# Puerto, nombre y quién lo arranca. Había TRES listas de puertos escritas a mano —la del apagado
+# (SERVICES), el bloque de arranque y el bucle del doctor— y ya habían divergido: 8003 figuraba en
+# la del apagado y en ninguna de las otras dos. Esa deriva no falla, desaparece: un puerto que se
+# reapea y nadie arranca es un servicio que no está y del que nadie se entera. Todo lo que sigue
+# (apagado, arranque, doctor, aviso de puertos ocupados) se deriva de acá, y catalog_check avisa
+# si vuelven a separarse.
+#   auto   -> lo arranca este script; catalog_check EXIGE que aparezca en el bloque de arranque.
+#   manual -> proveedor alternativo que no arranca nadie solo (visión :8003 y EMAGE :8004 solo se
+#             usan con VISION_PROVIDER=yolo / MOTION_PROVIDER=emage, a mano). Figuran igual para
+#             poder apagarlos y para que el doctor los nombre en vez de ignorarlos.
+# Ollama (:11434) queda FUERA a propósito: es un servicio del sistema, puede correr como otro
+# usuario y no se apaga por puerto sino descargando sus modelos (ver stop_ollama).
+SERVICE_CATALOG="3001:backend:auto 5173:vite:auto 8001:asr:auto 8002:tts:auto 8003:vision:manual 8004:emage:manual 8005:motion:auto 8006:agent:auto 8007:sense:auto"
+# Las tres vistas del catálogo, derivadas una sola vez: "puerto:nombre" para el apagado, los
+# puertos sueltos, y solo los que arranca el launcher (los únicos de los que tiene sentido decir
+# "ese servicio no arrancó").
+SERVICES=""; SERVICE_PORTS=""; AUTO_PORTS=""
+for _s in $SERVICE_CATALOG; do
+  _rest="${_s#*:}"
+  SERVICES="$SERVICES ${_s%%:*}:${_rest%%:*}"
+  SERVICE_PORTS="$SERVICE_PORTS ${_s%%:*}"
+  [ "${_rest#*:}" = auto ] && AUTO_PORTS="$AUTO_PORTS ${_s%%:*}"
+done
+SERVICES="${SERVICES# }"; SERVICE_PORTS="${SERVICE_PORTS# }"; AUTO_PORTS="${AUTO_PORTS# }"
+unset _s _rest
+
+# El chequeo que impide que vuelvan a divergir: lee el bloque de arranque de ESTE archivo y lo
+# compara con el catálogo, en los dos sentidos. Un puerto `auto` que nadie arranca es un servicio
+# reapeado y nunca levantado; un `up <puerto>` que no está en el catálogo es un servicio que
+# `hannah stop` no apaga y que el doctor no mira. Devuelve vacío si coinciden.
+catalog_check() {
+  local started p bad=""
+  started="$(sed -n '/^# ── Servicios (idempotente)/,/^# Sección crítica terminada/p' "$SELF" \
+    | grep -oE '\bup [0-9]{3,5}\b' | awk '{print $2}' | sort -u)"
+  for p in $AUTO_PORTS; do
+    printf '%s\n' "$started" | grep -qx "$p" || bad="$bad $p(en el catálogo, nadie lo arranca)"
+  done
+  for p in $started; do
+    case " $AUTO_PORTS " in *" $p "*) ;; *) bad="$bad $p(se arranca, no está en el catálogo)" ;; esac
+  done
+  printf '%s' "${bad# }"
+}
 
 up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # ¿Hay ALGO nuestro respondiendo ahí? "Puerto ocupado" no es "servicio sano": otra app en 8002
@@ -115,6 +160,38 @@ agent_key_var() {
   case "$(agent_key)" in sk-ant-*) echo ANTHROPIC_API_KEY ;; *) echo OPENROUTER_API_KEY ;; esac
 }
 
+# Los "ojos" (hannah-sense, :8007), con el mismo trato que las manos: la bandera del .env manda.
+sense_on() { [ "$(envval SENSE_ENABLED)" = "true" ]; }
+# El bearer entre el backend y :8007, misma precedencia que el del agente (panel ⚙ → .env →
+# generado y escrito al .env, 0600). Acá el token no es opcional ni en desarrollo: sin él el
+# sidecar contesta 401 en TODO menos /health, así que arrancarlo sin generarlo sería dejar arriba
+# un proceso que muestrea para nadie.
+sense_token() {
+  local t
+  t="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('sense',{}).get('token',''))" "$BACK/data/settings.json" 2>/dev/null)"
+  [ -n "$t" ] || t="$(envval HANNAH_SENSE_TOKEN)"
+  if [ -z "$t" ]; then
+    t="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    if grep -q '^#\?[[:space:]]*HANNAH_SENSE_TOKEN=' "$BACK/.env" 2>/dev/null; then
+      sed -i "s|^#\?[[:space:]]*HANNAH_SENSE_TOKEN=.*|HANNAH_SENSE_TOKEN=$t|" "$BACK/.env"
+    else printf '\nHANNAH_SENSE_TOKEN=%s\n' "$t" >>"$BACK/.env"; fi
+    chmod 600 "$BACK/.env" 2>/dev/null
+    echo "[hannah] HANNAH_SENSE_TOKEN generado en $BACK/.env" >>"$LOG"
+  fi
+  printf '%s' "$t"
+}
+# "¿Sigue mirando?", contestado sin abrir el HUD. Sale del /health del sidecar —la única ruta sin
+# token, que existe justo para esto— y cuenta FILAS, no configuración: un proceso vivo que dejó de
+# muestrear se ve como `ciega`, que es la diferencia que importa. Vacío = no contestó.
+watch_counts() {
+  local body
+  body="$(curl -sf -m 2 "http://127.0.0.1:8007/health" 2>/dev/null)" || return 1
+  printf '%s' "$body" | python3 -c 'import json, sys
+try: w = json.load(sys.stdin).get("watches") or {}
+except Exception: raise SystemExit(1)
+print("%d armada(s) · %d ciega(s) · %d suspendida(s)" % (w.get("armed", 0), w.get("blind", 0), w.get("suspended", 0)))' 2>/dev/null
+}
+
 # ── `hannah doctor` — diagnóstico del entorno ─────────────────────────────────
 # Dice si el overlay va a poder flotar acá y, si no, qué falta. Es lo primero que conviene
 # correr en una máquina nueva: antes esto fallaba en silencio (ventana normal, sin explicar).
@@ -135,10 +212,30 @@ doctor() {
   done
   echo
   printf '  servicios  :'
-  for p in 3001:backend 5173:vite 8001:asr 8002:tts 8005:motion 8006:agent 11434:ollama; do
-    if healthy "${p%%:*}"; then printf ' %s✓' "${p##*:}"; elif up "${p%%:*}"; then printf ' %s⚠(puerto ocupado por otra cosa)' "${p##*:}"; else printf ' %s✗' "${p##*:}"; fi
+  # Del catálogo, no de una tercera lista: 8003 faltaba acá y por eso nadie notó durante meses
+  # que se apagaba un servicio que no se arrancaba. Ollama se agrega al vuelo (no está en el
+  # catálogo porque no se apaga por puerto).
+  local port role name manual_down=""
+  for r in $SERVICE_CATALOG 11434:ollama:auto; do
+    port="${r%%:*}"; name="${r#*:}"; role="${name#*:}"; name="${name%%:*}"
+    if healthy "$port"; then printf ' %s✓' "$name"
+    elif up "$port"; then printf ' %s⚠(puerto ocupado por otra cosa)' "$name"
+    elif [ "$role" = manual ]; then printf ' %s–' "$name"; manual_down=1
+    else printf ' %s✗' "$name"; fi
   done
-  echo; echo
+  echo
+  [ -n "$manual_down" ] && echo "               – proveedor alternativo: no lo arranca el launcher (npm run sidecar:<nombre>)"
+  # La deriva entre las tres listas, dicha en voz alta. Callar cuando coinciden dejaría al lector
+  # sin saber que alguien lo comprueba, que es la mitad del valor de comprobarlo.
+  local drift; drift="$(catalog_check)"
+  if [ -n "$drift" ]; then
+    echo "  catálogo   : ⚠️  INCONSISTENTE — $drift"
+    echo "               (SERVICE_CATALOG y el bloque de arranque de este script no coinciden)"
+    echo "hannah: catálogo de servicios inconsistente: $drift" >&2
+  else
+    echo "  catálogo   : $(printf '%s\n' $SERVICE_PORTS | wc -l) servicios; apagado, arranque y diagnóstico coinciden ✓"
+  fi
+  echo
   if agent_on; then
     printf '  manos      : AGENT_ENABLED=true ·'
     has bun && printf ' bun %s' "$(bun --version 2>/dev/null)" || printf ' bun FALTA (https://bun.sh)'
@@ -148,6 +245,16 @@ doctor() {
     echo
   else
     echo "  manos      : apagadas (AGENT_ENABLED=false) — Hannah conversa y ejecuta comandos simples, sin tareas de varios pasos"
+  fi
+  # "¿Sigue mirando?" tiene que poder contestarse acá: el contrato sense.v1 no emite latido, así
+  # que cuatro horas de silencio y cuatro horas de ceguera se ven igual desde afuera. Lo que las
+  # separa es este contador.
+  if sense_on; then
+    local counts
+    if counts="$(watch_counts)"; then echo "  vigilancia : SENSE_ENABLED=true · $counts"
+    else echo "  vigilancia : SENSE_ENABLED=true pero :8007 no contesta — NO está mirando nada (mirá $LOG)"; fi
+  else
+    echo "  vigilancia : apagada (SENSE_ENABLED=false) — no puede quedarse mirando nada"
   fi
   echo
 
@@ -182,7 +289,8 @@ doctor() {
 # Se mata por PUERTO y por patrón, no por una lista de PIDs guardada, a propósito: así se
 # lleva también los sidecars HUÉRFANOS de corridas anteriores. Eso no es teórico — había uno
 # de una corrida vieja ocupando 2.4GB de VRAM sin que nada lo registrara.
-SERVICES="3001:backend 5173:vite 8001:asr 8002:tts 8003:vision 8004:emage 8005:motion 8006:agent"
+# SERVICES (puerto:nombre) sale del catálogo de arriba; la lista suelta que vivía acá es la que
+# se había quedado sin 8007 y de más con 8003.
 
 # El proyecto son los repos ya resueltos, NO todo lo que cuelga de $ROOT. En un checkout de
 # desarrollo $ROOT es workspace/ y los servicios corren desde sus hermanos, así que el límite
@@ -445,6 +553,13 @@ fi
 # solo cerraba el fd del proceso final: la subshell intermedia seguía sosteniendo el candado
 # mientras viviera el servicio. Con el `stop` tomando el mismo candado eso era fatal —dejaba el
 # apagado como no-op silencioso—, así que además hay un trap que lo suelta pase lo que pase.
+# La deriva entre el catálogo y este bloque no puede esperar al próximo `doctor`: si un servicio
+# quedó en la lista de apagado y fuera de acá, este arranque es justo el que no lo levanta.
+_drift="$(catalog_check)"
+[ -n "$_drift" ] && {
+  echo "[hannah] catálogo de servicios INCONSISTENTE: $_drift" >>"$LOG"
+  echo "hannah: catálogo de servicios inconsistente: $_drift (./hannah doctor)" >&2
+}
 has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG" 2>&1 & } 9>&-
 up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & ) 9>&-
 up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & ) 9>&-
@@ -467,6 +582,32 @@ if agent_on; then
                 HANNAH_AGENT_MAX_MODE="$(envval AGENT_MODE)" "$(agent_key_var)=$(agent_key)" \
                 HANNAH_AGENT_DENY_DIRS="$BACK/data" \
       && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
+  fi
+fi
+# Los "ojos" (hannah-sense, :8007): SOLO si SENSE_ENABLED=true en el .env del backend, igual que
+# las manos y por la misma razón — sin la bandera el backend ni siquiera arma el vocabulario de
+# [WATCH:], así que un sidecar arriba sería un proceso muestreando para nadie. También antes que
+# el backend, que lee el .env (y el token de acá abajo) al arrancar.
+if sense_on; then
+  if [ ! -x "$BACK/sidecar/sense/.venv/bin/python" ]; then
+    echo "[hannah] SENSE_ENABLED=true pero falta $BACK/sidecar/sense/.venv — sin ojos (SETUP.md §3)" >>"$LOG"
+  else
+    # El token se resuelve ACÁ y no dentro del subshell de fondo: sense_token puede escribir el
+    # .env y el backend lo lee al arrancar tres líneas más abajo. Hacerlo en paralelo es una
+    # carrera cuyo lado perdedor es un backend con un token distinto al del sidecar, o sea 401
+    # en todas las rutas de vigilancia sin una sola línea de error que lo explique.
+    SENSE_TOK="$(sense_token)"
+    # Los topes viajan explícitos porque el sidecar lee su PROPIO entorno (sense/config.py) y
+    # `npm run` no carga el .env: sin esto el backend diría "dos vigilancias como mucho" —y eso
+    # es lo que Hannah dice en voz alta al armar— mientras el sidecar aplica otro número. Vacío
+    # es válido: config.py cae a su default y avisa.
+    up 8007 || ( cd "$BACK" \
+      && export HANNAH_SENSE_TOKEN="$SENSE_TOK" \
+                SENSE_MAX_WATCHES="$(envval SENSE_MAX_WATCHES)" \
+                SENSE_MIN_PERIOD_MS="$(envval SENSE_MIN_PERIOD_MS)" \
+                SENSE_DEBOUNCE_N="$(envval SENSE_DEBOUNCE_N)" \
+                SENSE_BLIND_MS="$(envval SENSE_BLIND_MS)" \
+      && nohup npm run sidecar:sense >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
@@ -498,7 +639,7 @@ flock -u 9 2>/dev/null
 # 127.0.0.1 porque Vite le hace de proxy).
 if [ "$MODE" = services ]; then
   for _ in $(seq 1 90); do healthy 3001 && up 5173 && healthy 8002 && break; sleep 1; done
-  warn_squatters 3001 8001 8002 8005 8006
+  warn_squatters $AUTO_PORTS
   ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
   [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   proto=https; vite_http_ok && proto=http
@@ -514,7 +655,7 @@ fi
 # indistinguible de "la app no arranca". Mejor decirlo y salir.
 READY=""
 for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sleep 1; done
-warn_squatters 3001 8001 8002 8005 8006
+warn_squatters $AUTO_PORTS
 if [ -z "$READY" ]; then
   echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
   echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en $FRONT?)." >&2

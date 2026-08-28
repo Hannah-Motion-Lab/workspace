@@ -12,6 +12,7 @@ Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real termin
 | `hannah-backend/` | WS gateway + REST: orchestrates ASR→LLM→TTS→lip-sync + Python sidecars (Whisper, Kokoro, YOLO/VLM). Tools (internet, terminal), memory, window control. | Node (ESM) |
 | `hannah-frontend/` | React + three.js client: VRoid/VRM avatar, mic, camera, HUD, terminal panel. | React/Vite |
 | `hannah-motion-lab/` | text→motion model (gestures) served on :8005. | Python |
+| `hannah-backend/sidecar/sense/` | **hannah-sense** on :8007: the watches. Keeps looking at a process, a log or a port after the conversation ends and says when it stops. Observes only — it never touches the machine. Off by default (`SENSE_ENABLED`). | Python |
 | `hannah-desktop/` | **Electron desktop app** (universal overlay Win/Mac/Linux). | Electron |
 | `hannah-site/` | Landing page + Ollama-style installer (live on [GitHub Pages](https://hannah-motion-lab.github.io/site/)). | Static HTML |
 | `hannah` | **Launcher**: brings up the whole stack and opens the overlay (by default, the app). | Bash |
@@ -37,6 +38,7 @@ Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real termin
 | Motion (lab, default) | 8005 | `hannah-motion-lab` · EMAGE on 8004 (fallback) |
 | Ollama | 11434 | LLM + embeddings |
 | Agent (hannah-agent) | 8006 | **127.0.0.1** · the "hands", off by default (`AGENT_ENABLED`) |
+| Sense (hannah-sense) | 8007 | **127.0.0.1** · the watches, off by default (`SENSE_ENABLED`). Bearer on every route but `/health`; any request carrying an `Origin` is refused |
 
 > **Access from your phone/another computer:** you go to `https://<your-pc-ip>:5173` and Vite acts
 > as a proxy to the local backend. The backend is **not** exposed to the network (neither the

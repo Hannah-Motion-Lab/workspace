@@ -91,6 +91,22 @@ uv venv .venv --python 3.12          # or: python -m venv .venv
 uv pip install -r requirements.txt   # or: .venv/bin/pip install -r requirements.txt
 ```
 
+### The watch sidecar (hannah-sense, `:8007`) — its own venv, and it has to be its own
+
+```bash
+cd hannah-backend/sidecar/sense
+uv venv .venv --python 3.12 --system-site-packages   # or: python -m venv --system-site-packages .venv
+uv pip install -r requirements.txt                   # or: .venv/bin/pip install -r requirements.txt
+```
+
+`--system-site-packages` is not decoration: the screen and AT-SPI rungs that come later need
+`gi` and `dbus`, which are distro packages and not usable from PyPI. And it is a **second** venv
+on purpose — the one above pins numpy and onnxruntime-gpu for faster-whisper, Kokoro and YOLO, so
+adding the system site-packages to it would put a second numpy on the path and break the voice at
+runtime, silently. Two venvs cost disk; one costs the product.
+
+`install.sh` does both of these for you. This is only for a checkout you cloned by hand.
+
 ### Voice weights (MANDATORY — without this Hannah doesn't speak)
 
 They are not in git. Download them from the **v1.0** release of `kokoro-onnx` into
@@ -179,6 +195,28 @@ two commands and costs a few cents on Sonnet.
 key (or credits) the agent starts but every task fails at the model** — Hannah will say the task failed; she
 will not pretend it worked.
 
+## 5c. The eyes (optional): the watches
+
+Also skip this unless you want her to **keep watching something** after the conversation ends
+("check that my training doesn't stop"). It ships **off**, and while it is off the word does not
+even exist for her: the `[WATCH:]` vocabulary is assembled from a live capability probe, so she
+cannot promise a watch nobody would arm.
+
+```bash
+# hannah-backend/.env
+SENSE_ENABLED=true
+# HANNAH_SENSE_TOKEN=   # leave it: ./hannah generates it into the .env (0600) on first start
+```
+
+Then `./hannah` starts `hannah-sense` on `:8007` before the backend, and `./hannah stop` shuts it
+down with everything else. The sidecar **only observes** — it never touches the machine; anything
+that needs fixing is an ordinary agent task, with its approval and its audit trail. Ask
+`./hannah doctor` and the `vigilancia:` line says how many watches are armed, blind or suspended,
+so "is she still watching?" is answerable without opening the HUD.
+
+Watches do **not** survive a restart: after a reboot or a `./hannah stop` they come back
+`suspended`, never armed. Re-arming something you did not ask for again is not consent.
+
 ## 6. Bringing it up
 
 **Option A — everything at once (Linux):**
@@ -198,6 +236,7 @@ bind = SUPER, H, exec, /path/to/Hannah-Motion/hannah
 ```bash
 cd hannah-backend && npm run sidecar:tts     # :8002  (voice — essential)
 cd hannah-backend && npm run sidecar:asr     # :8001  (listening)
+cd hannah-backend && npm run sidecar:sense   # :8007  (the watches; only with SENSE_ENABLED=true)
 cd hannah-motion-lab && .venv/bin/python -m uvicorn serve.main:app --port 8005   # gestures
 cd hannah-backend && npm run dev             # :3001  backend
 cd hannah-frontend && npm run dev            # :5173  UI  → open it in the browser
@@ -214,6 +253,7 @@ self-signed certificate). Vite proxies to the backend, so everything works, term
 curl -s localhost:3001/api/v1/health          # backend
 curl -s localhost:8002/health                 # TTS (says whether it's on CUDA or CPU)
 curl -s localhost:8005/health                 # gestures
+curl -s localhost:8007/health                 # the watches (armed/blind/suspended), if enabled
 curl -s localhost:11434/api/tags              # Ollama models
 ```
 
@@ -225,6 +265,7 @@ Then, in the interface: say something to her. You should get **written answer + 
 | the motion-lab's `runs/*.pt` | speaks but **doesn't gesture** while speaking |
 | Ollama / the model | **no answer at all** |
 | ASR sidecar | doesn't understand you by voice (text does work) |
+| the sense venv, with `SENSE_ENABLED=true` | she says she cannot watch anything; `doctor` says `:8007` does not answer |
 
 ---
 

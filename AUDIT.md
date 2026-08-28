@@ -393,3 +393,55 @@ launcher. Note for whoever runs these next: a **single-file** `jest` invocation 
 repo (open handles, every file, not only the new one), so it must be run through `npm test`.
 
 Verification run: backend `npm test` 128 ✓ + lint · frontend vitest 10 ✓ + lint + build · agent `bun test test/hannah/` 261 ✓ + typecheck · desktop lint · `bash -n` launcher/installer · live Electron (dist mode) against the backend: session, WebSocket, camera permission, no CORS errors; traversal probes on the dist server refused.
+
+---
+
+## New surface — 2026-08-27 (P5.1: `hannah-sense` on :8007)
+
+Recorded here because the audit's central finding was that **every unauthenticated loopback port
+is reachable by any process of this user and by any web page open in a browser**, and P5.1 adds a
+port. It is the first primitive in the system that runs with **no human utterance at all**, so it
+is the one place the backend is deliberately stricter than its own default.
+
+**The port.** `hannah-sense`, `127.0.0.1:8007`, a Python sidecar. Ships **off**
+(`SENSE_ENABLED=false`); the launcher starts it only when the backend's `.env` says true, the same
+gate the agent gets. It **observes and never acts**: every corrective action stays an agent task,
+so there is still one actuator, one policy layer and one audit trail.
+
+**What guards it** (`backend/sidecar/sense/main.py`, ported from the façade's `facade/routes.ts` —
+same order, same codes, because C1/C3/C4 were one fact and it is not repeated):
+
+| Guard | Behaviour |
+|---|---|
+| `GET /health` | open, on purpose: the backend and `hannah doctor` ask it whether the sidecar exists, and a 401 there is indistinguishable from "misconfigured". It carries **no home path and no username** — M22 is still open on the agent's `/health`; it was not repeated here |
+| Everything else | constant-time bearer against `HANNAH_SENSE_TOKEN`. **An empty token does not open the sidecar, it closes it**: every route but `/health` answers 401. The façade's `if (!token) return true` is deliberately *not* copied |
+| Any `Origin` header | 403. The backend is the only client and Node's fetch sends none; a page in a browser on this machine sends one |
+| Non-JSON body · body over 256 KiB | 415 · 400 |
+| The token itself | the launcher generates it into `.env` (0600) when missing, with the same precedence as the agent's (⚙ panel → `.env` → generated) |
+
+**`/api/v1/watches` is stricter than the rest of the backend, deliberately.** `authorize()` returns
+`{ok:true, reason:'loopback'}` with no token for any loopback IP, and for the rest of the API that
+is fine — nothing moves unless a human says something. A watch does. So `requireWatchAuth`
+(`src/api/auth.js`) demands the **UI token even on loopback** and 403s anything carrying an
+`Origin`. The consequence is intended and worth stating: **the HUD, being a browser, cannot use
+these routes** — it learns about watches over the WebSocket (`watch_armed`/`watch_state`) and
+disarms with `WATCH_DISARM`. The REST routes are for what is not a browser: the launcher and
+`hannah doctor`.
+
+**What never comes back out.** The row the backend returns is a hand-written whitelist
+(`api/watches.js`), so a future field on the sidecar's row — a path, a host, the line that matched —
+cannot leak through this route without someone writing it in. There is no command string anywhere
+in the surface: sensors are **typed specs**, built from a closed catalog, and everything the sidecar
+executes goes through `run_argv` (argument list, `shell=False`), so a pattern of `; rm -rf ~` has
+nowhere to land.
+
+**Two residuals, open and stated:**
+
+- `~/.local/share/hannah-sense/` (0700, files 0600) holds `watches.json`. The plan (§9) asks for it
+  in the agent's `DENIED_DIRECTORIES` beside `~/.local/share/hannah-agent`; **that has not been
+  added**, so an agent task can read the list of what she is watching. It is labels and sensor
+  kinds, not credentials — but it is the same class of file as the agent's own store. Tracked in
+  `agent/docs/KNOWN-GAPS.md`.
+- `WATCH_DISARM` arrives over the WebSocket, which keeps the backend's ordinary posture (loopback
+  is served without a token, like `AGENT_APPROVAL`). Disarming only ever *stops* her watching, so
+  it is the de-escalating direction; arming is not reachable that way.
