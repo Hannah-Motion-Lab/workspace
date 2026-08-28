@@ -136,5 +136,6 @@ if (Test-Path $App) {
   # it holds a single-instance lock, so a second launch just focuses the existing window
   Start-Process -FilePath $App
 } else {
-  Write-Host "hannah: $App not found , re-run the installer, or open http://localhost:3001/test-client.html"
+  $setup = Join-Path $Root 'HannahSetup.exe'
+  Write-Host "hannah: the overlay app is not installed ($App). $(if (Test-Path $setup) { "Run $setup (SmartScreen: More info -> Run anyway) and try again." } else { 'Re-run the installer.' }) Meanwhile: http://localhost:3001/test-client.html"
 }
