@@ -409,7 +409,7 @@ irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
 None of the installers touches Ollama or a language model. The **first time the overlay opens,
 Hannah asks where she should think**: *on this PC* (she detects an Ollama you already have, or
 installs one in your user folder and pulls `qwen2.5:7b`, `moondream` and `nomic-embed-text` with a
-progress bar, if you press the button) or *a provider* (Groq / OpenAI / Anthropic / OpenRouter,
+progress bar, if you press the button) or *a provider* (Groq / OpenAI / Anthropic / Google (AI Studio) / OpenRouter,
 paste a key). Vision and memory recall follow that choice (on with a local brain, off with a
 provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the status behind it.
 
