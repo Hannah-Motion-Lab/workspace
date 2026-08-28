@@ -350,11 +350,29 @@ the provider. Without CUDA, the TTS is the bottleneck.
 
 ## macOS and Windows
 
-The one-command installer and the `hannah` launcher are **Linux only** (they lean on `ss`,
-`/proc`, `ip` and the X11/Hyprland adapters). On macOS and Windows the **overlay app** is
-built for you — [releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
-`Hannah-<version>-mac-arm64.dmg` (Apple Silicon), `-mac-x64.dmg` (Intel), `-win-x64.exe` —
-and the rest of the stack is set up by hand, in your user folder, **no admin needed**:
+Each has its own one-command install — everything lands in your user folder, **no admin**,
+and anything you already have (git, node ≥ 20, uv, bun, ollama) is reused instead of reinstalled:
+
+```bash
+# macOS (Apple Silicon or Intel) — needs git (Xcode Command Line Tools)
+curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash
+```
+```powershell
+# Windows 10/11 (x64), in PowerShell
+irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
+```
+
+Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
+voice and listening sidecars on the CPU, the backend and the overlay app; `hannah stop` and
+`hannah doctor` work as on Linux. What differs from Linux: the voice runs on the CPU (~1–2 s per
+sentence) and there is **no gesture model** (CUDA-only) — the avatar idles and looks around but
+does not gesture while speaking. The Linux `hannah` launcher itself is Linux-only (it leans on
+`ss`, `/proc`, `ip` and the X11/Hyprland adapters).
+
+If you would rather do it by hand, this is what the installers do — the **overlay app** is built
+for you ([releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
+`Hannah-<version>-mac-arm64.dmg` (Apple Silicon), `-mac-x64.dmg` (Intel), `-win-x64.exe`), and
+the rest of the stack goes in your user folder:
 
 - **Node 20+** via [nvm](https://github.com/nvm-sh/nvm), **Python 3.12** via [uv](https://docs.astral.sh/uv/)
   (`uv venv .venv --python 3.12`), **bun** for the hands.
