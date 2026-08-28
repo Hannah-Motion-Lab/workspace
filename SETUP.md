@@ -347,3 +347,33 @@ postinstall: `npm rebuild electron` or `npm install electron --force`.
 
 **Everything is slow** → check whether the sidecars are on CPU: `curl -s localhost:8002/health` says
 the provider. Without CUDA, the TTS is the bottleneck.
+
+## macOS and Windows
+
+The one-command installer and the `hannah` launcher are **Linux only** (they lean on `ss`,
+`/proc`, `ip` and the X11/Hyprland adapters). On macOS and Windows the **overlay app** is
+built for you — [releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
+`Hannah-<version>-mac-arm64.dmg` (Apple Silicon), `-mac-x64.dmg` (Intel), `-win-x64.exe` —
+and the rest of the stack is set up by hand, in your user folder, **no admin needed**:
+
+- **Node 20+** via [nvm](https://github.com/nvm-sh/nvm), **Python 3.12** via [uv](https://docs.astral.sh/uv/)
+  (`uv venv .venv --python 3.12`), **bun** for the hands.
+- **Ollama**: the desktop app. On macOS drag it to `~/Applications` (not `/Applications`) and
+  decline the "install CLI" step (that is the one prompt that wants admin); the binary is at
+  `~/Applications/Ollama.app/Contents/Resources/ollama`. Then `ollama pull qwen2.5:7b`.
+- **Sidecars on CPU**: `sidecar/requirements.txt` pins `onnxruntime-gpu`, which has no macOS
+  wheel — swap it for `onnxruntime` (`sed 's/onnxruntime-gpu==.*/onnxruntime/' requirements.txt > req-cpu.txt`)
+  and run the TTS with `TTS_DEVICE=cpu`. Whisper runs on CPU as is. Expect ~1–2 s per sentence
+  for the voice on Apple Silicon.
+- **No gestures**: the motion model is CUDA-only; set `MOTION_ENABLED=false` in `.env` and the
+  procedural idle takes over.
+- **Run it** (four terminals from `hannah-backend`): `TTS_DEVICE=cpu npm run sidecar:tts`,
+  `npm run sidecar:asr`, `npm run dev`; then `HANNAH_HTTP=1 npm run dev` in `hannah-frontend`
+  and open the overlay app (or `HANNAH_DEV=1 npm start` in `hannah-desktop` to use the dev server).
+- **Unsigned builds.** macOS quarantines the download and says the app "can't be opened":
+  `xattr -dr com.apple.quarantine ~/Applications/Hannah.app` fixes it without admin (you own the
+  file). Windows SmartScreen: "More info → Run anyway". An app you build yourself
+  (`npm run build:mac` / `build:win` in `hannah-desktop`) carries no quarantine at all.
+- The overlay talks to the backend at `http://localhost:3001`, so everything above must be
+  running on the same machine. Floating on top and moving between monitors use Electron's own
+  API there (no compositor tools needed).
