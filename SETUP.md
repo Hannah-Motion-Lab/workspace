@@ -209,7 +209,9 @@ SENSE_ENABLED=true
 ```
 
 Then `./hannah` starts `hannah-sense` on `:8007` before the backend, and `./hannah stop` shuts it
-down with everything else. The sidecar **only observes** — it never touches the machine; anything
+down with everything else. The same is true of `hannah-mac` and `hannah.ps1`: the process and
+port watches work on every platform (`pgrep`/`lsof` on macOS, psutil on Windows); the systemd
+watch only exists on Linux, and she does not offer it elsewhere. The sidecar **only observes** — it never touches the machine; anything
 that needs fixing is an ordinary agent task, with its approval and its audit trail. Ask
 `./hannah doctor` and the `vigilancia:` line says how many watches are armed, blind or suspended,
 so "is she still watching?" is answerable without opening the HUD.

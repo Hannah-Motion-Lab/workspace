@@ -57,6 +57,27 @@ agent_token() {
   fi
   printf '%s' "$t"
 }
+# the watches (hannah-sense, :8007): the .env flag decides, like the hands
+sense_on() { [ "$(envval SENSE_ENABLED)" = "true" ]; }
+sense_token() {
+  local t
+  t="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('sense',{}).get('token',''))" "$BACK/data/settings.json" 2>/dev/null)"
+  [ -n "$t" ] || t="$(envval HANNAH_SENSE_TOKEN)"
+  if [ -z "$t" ]; then
+    t="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    if grep -q '^#\{0,1\}[[:space:]]*HANNAH_SENSE_TOKEN=' "$BACK/.env" 2>/dev/null; then
+      sed -i '' "s|^#\{0,1\}[[:space:]]*HANNAH_SENSE_TOKEN=.*|HANNAH_SENSE_TOKEN=$t|" "$BACK/.env"
+    else printf '\nHANNAH_SENSE_TOKEN=%s\n' "$t" >>"$BACK/.env"; fi
+    chmod 600 "$BACK/.env" 2>/dev/null
+  fi
+  printf '%s' "$t"
+}
+watch_counts() {
+  curl -sf -m 2 "http://127.0.0.1:8007/health" 2>/dev/null | python3 -c 'import json, sys
+try: w = json.load(sys.stdin).get("watches") or {}
+except Exception: raise SystemExit(1)
+print("%d armed · %d blind · %d suspended" % (w.get("armed", 0), w.get("blind", 0), w.get("suspended", 0)))' 2>/dev/null
+}
 # our own processes: anchored to this checkout's path (never other apps)
 own_pids() { pgrep -u "$(id -u)" -f "$ROOT/" 2>/dev/null; }
 
@@ -65,12 +86,13 @@ doctor() {
   echo "  root       : $ROOT"
   printf '  tools      :'; for t in node uv bun ollama; do has $t && printf ' %s✓' $t || printf ' %s✗' $t; done; echo
   printf '  services   :'
-  for p in 11434:ollama 8002:tts 8001:asr 8005:motion 3001:backend 8006:agent; do
+  for p in 11434:ollama 8002:tts 8001:asr 8005:motion 3001:backend 8006:agent 8007:sense; do
     if healthy "${p%%:*}"; then printf ' %s✓' "${p##*:}"; elif up "${p%%:*}"; then printf ' %s⚠(port busy)' "${p##*:}"; else printf ' %s✗' "${p##*:}"; fi
   done; echo
   [ -d "$APP" ] && echo "  app        : $APP ✓" || echo "  app        : $APP ✗ (re-run the installer)"
   echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | sed -n 's/.*"device": *"\([a-z]*\)".*/on \1/p' || true)"
   agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (AGENT_ENABLED=false)"
+  if sense_on; then echo "  watches    : $(watch_counts || echo 'SENSE_ENABLED=true but :8007 is not answering')"; else echo "  watches    : off (SENSE_ENABLED=false)"; fi
 }
 
 stop_all() {
@@ -98,15 +120,20 @@ up 8002 || ( cd "$BACK/sidecar/tts" && TTS_DEVICE=cpu nohup "$PY" -m uvicorn mai
 up 8001 || ( cd "$BACK/sidecar/asr" && ASR_DEVICE=cpu nohup "$PY" -m uvicorn main:app --port 8001 >>"$LOG" 2>&1 & )
 # gestures: Apple's GPU (MPS) if there is one, else the CPU — never skipped
 up 8005 || ( cd "$LAB" && [ -x .venv/bin/python ] && MOTION_DEVICE=auto PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
+# the watches, before the backend so its capability probe finds them
+if sense_on && [ -x "$BACK/sidecar/sense/.venv/bin/python" ]; then
+  up 8007 || ( cd "$BACK/sidecar/sense" && HANNAH_SENSE_TOKEN="$(sense_token)" nohup .venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8007 >>"$LOG" 2>&1 & )
+fi
 if agent_on && has bun && [ -d "$AGENT" ]; then
   up 8006 || ( cd "$AGENT" && tok="$(agent_token)" \
     && export HANNAH_AGENT_TOKEN="$tok" HANNAH_AGENT_SERVER_PASSWORD="$tok" HANNAH_AGENT_MAX_MODE="$(envval AGENT_MODE)" "$(agent_key_var)=$(agent_key)" \
+              HANNAH_AGENT_DENY_DIRS="$BACK/data" \
     && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & )
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & )
 for _ in $(seq 1 60); do healthy 3001 && break; sleep 1; done
 healthy 3001 || { echo "hannah: the backend did not come up — see $LOG"; exit 1; }
-for p in 8001 8002 8005 8006; do up "$p" && ! healthy "$p" && echo "[hannah] WARNING: port $p is busy with something else" >>"$LOG"; done
+for p in 8001 8002 8005 8006 8007; do up "$p" && ! healthy "$p" && echo "[hannah] WARNING: port $p is busy with something else" >>"$LOG"; done
 if [ -d "$APP" ]; then
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # the open command also just focuses it if it is already running

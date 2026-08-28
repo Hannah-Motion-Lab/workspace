@@ -48,6 +48,20 @@ function AgentToken {
   }
   $t
 }
+function SenseOn { (EnvVal 'SENSE_ENABLED') -eq 'true' }
+function SenseToken {
+  $t = Settings 'sense' 'token'; if (-not $t) { $t = EnvVal 'HANNAH_SENSE_TOKEN' }
+  if (-not $t) {
+    $t = -join ((1..48) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+    $f = Join-Path $Back '.env'; $txt = Get-Content $f -Raw
+    if ($txt -match '(?m)^#?\s*HANNAH_SENSE_TOKEN=') { $txt = $txt -replace '(?m)^#?\s*HANNAH_SENSE_TOKEN=.*$', "HANNAH_SENSE_TOKEN=$t" } else { $txt += "`nHANNAH_SENSE_TOKEN=$t`n" }
+    Set-Content $f $txt -NoNewline
+  }
+  $t
+}
+function WatchCounts {
+  try { $w = (Invoke-RestMethod 'http://127.0.0.1:8007/health' -TimeoutSec 2).watches; "$($w.armed) armed · $($w.blind) blind · $($w.suspended) suspended" } catch { '' }
+}
 # our own processes: anchored to this checkout's path (never other apps)
 function OwnProcs { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Root\*" -and $_.ProcessId -ne $PID } }
 # one log per service under <root>\.hannah-logs (two processes cannot share one redirected file)
@@ -63,13 +77,14 @@ switch ($Command) {
     Write-Host 'Hannah — Windows'
     Write-Host "  root       : $Root"
     $t = foreach ($x in 'node', 'uv', 'bun', 'ollama') { if (Has $x) { "$x✓" } else { "$x✗" } }; Write-Host "  tools      : $($t -join ' ')"
-    $s = foreach ($p in @{11434='ollama'; 8002='tts'; 8001='asr'; 8005='motion'; 3001='backend'; 8006='agent'}.GetEnumerator() | Sort-Object Name) {
+    $s = foreach ($p in @{11434='ollama'; 8002='tts'; 8001='asr'; 8005='motion'; 3001='backend'; 8006='agent'; 8007='sense'}.GetEnumerator() | Sort-Object Name) {
       if (Healthy $p.Name) { "$($p.Value)✓" } elseif (Up $p.Name) { "$($p.Value)⚠(port busy)" } else { "$($p.Value)✗" } }
     Write-Host "  services   : $($s -join ' ')"
     Write-Host "  app        : $App $(if (Test-Path $App) { '✓' } else { '✗ (re-run the installer)' })"
     $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
     Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
     Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true · key $(if (AgentKey) { '✓' } else { '✗' })" } else { 'off (AGENT_ENABLED=false)' })"
+    Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { 'SENSE_ENABLED=true but :8007 is not answering' } } else { 'off (SENSE_ENABLED=false)' })"
     exit 0
   }
   'stop' {
@@ -92,16 +107,19 @@ if (-not (Up 8001)) { StartBg 'asr' (Join-Path $Back 'sidecar\asr') $py '-m uvic
 # gestures: the NVIDIA card if there is one, else the CPU — never skipped
 $mpy = Join-Path $Lab '.venv\Scripts\python.exe'
 if (-not (Up 8005) -and (Test-Path $mpy)) { StartBg 'motion' $Lab $mpy '-m uvicorn serve.main:app --port 8005' @{ MOTION_DEVICE = 'auto'; PYTHONPATH = (Join-Path $Lab 'src') } }
+# the watches, before the backend so its capability probe finds them
+$spy = Join-Path $Back 'sidecar\sense\.venv\Scripts\python.exe'
+if ((SenseOn) -and (Test-Path $spy) -and -not (Up 8007)) { StartBg 'sense' (Join-Path $Back 'sidecar\sense') $spy '-m uvicorn main:app --host 127.0.0.1 --port 8007' @{ HANNAH_SENSE_TOKEN = (SenseToken) } }
 if ((AgentOn) -and (Has bun) -and (Test-Path $Agent) -and -not (Up 8006)) {
   $tok = AgentToken
-  $aenv = @{ HANNAH_AGENT_TOKEN = $tok; HANNAH_AGENT_SERVER_PASSWORD = $tok; HANNAH_AGENT_MAX_MODE = (EnvVal 'AGENT_MODE') }
+  $aenv = @{ HANNAH_AGENT_TOKEN = $tok; HANNAH_AGENT_SERVER_PASSWORD = $tok; HANNAH_AGENT_MAX_MODE = (EnvVal 'AGENT_MODE'); HANNAH_AGENT_DENY_DIRS = (Join-Path $Back 'data') }
   $aenv[(AgentKeyVar)] = (AgentKey)
   StartBg 'agent' $Agent 'bun' 'run dev serve --port 8006' $aenv
 }
 if (-not (Up 3001)) { StartBg 'backend' $Back 'node' 'src\server.js' @{} }
 for ($i = 0; $i -lt 60 -and -not (Healthy 3001); $i++) { Start-Sleep 1 }
 if (-not (Healthy 3001)) { Write-Host "hannah: the backend did not come up — see $Logs\backend.err.log"; exit 1 }
-foreach ($p in 8001, 8002, 8005, 8006) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
+foreach ($p in 8001, 8002, 8005, 8006, 8007) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
 if (Test-Path $App) {
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # it holds a single-instance lock, so a second launch just focuses the existing window
