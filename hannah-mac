@@ -58,7 +58,7 @@ agent_token() {
   printf '%s' "$t"
 }
 # the watches (hannah-sense, :8007): the .env flag decides, like the hands
-sense_on() { [ "$(envval SENSE_ENABLED)" = "true" ]; }
+sense_on() { [ "$(envval SENSE_ENABLED)" != "false" ]; }
 sense_token() {
   local t
   t="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('sense',{}).get('token',''))" "$BACK/data/settings.json" 2>/dev/null)"
@@ -92,7 +92,7 @@ doctor() {
   [ -d "$APP" ] && echo "  app        : $APP ✓" || echo "  app        : $APP ✗ (re-run the installer)"
   echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | sed -n 's/.*"device": *"\([a-z]*\)".*/on \1/p' || true)"
   agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (AGENT_ENABLED=false)"
-  if sense_on; then echo "  watches    : $(watch_counts || echo 'SENSE_ENABLED=true but :8007 is not answering')"; else echo "  watches    : off (SENSE_ENABLED=false)"; fi
+  if sense_on; then echo "  watches    : $(watch_counts || echo ':8007 is not answering (missing sidecar/sense/.venv? re-run the installer)')"; else echo "  watches    : off (SENSE_ENABLED=false)"; fi
 }
 
 stop_all() {
@@ -122,7 +122,7 @@ up 8001 || ( cd "$BACK/sidecar/asr" && ASR_DEVICE=cpu nohup "$PY" -m uvicorn mai
 up 8005 || ( cd "$LAB" && [ -x .venv/bin/python ] && MOTION_DEVICE=auto PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
 # the watches, before the backend so its capability probe finds them
 if sense_on && [ -x "$BACK/sidecar/sense/.venv/bin/python" ]; then
-  up 8007 || ( cd "$BACK/sidecar/sense" && HANNAH_SENSE_TOKEN="$(sense_token)" nohup .venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8007 >>"$LOG" 2>&1 & )
+  up 8007 || ( cd "$BACK/sidecar/sense" && export HANNAH_SENSE_TOKEN="$(sense_token)" SENSE_MAX_WATCHES="$(envval SENSE_MAX_WATCHES)" SENSE_MIN_PERIOD_MS="$(envval SENSE_MIN_PERIOD_MS)" SENSE_DEBOUNCE_N="$(envval SENSE_DEBOUNCE_N)" SENSE_BLIND_MS="$(envval SENSE_BLIND_MS)" && nohup .venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8007 >>"$LOG" 2>&1 & )
 fi
 if agent_on && has bun && [ -d "$AGENT" ]; then
   up 8006 || ( cd "$AGENT" && tok="$(agent_token)" \

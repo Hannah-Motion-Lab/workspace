@@ -161,7 +161,7 @@ agent_key_var() {
 }
 
 # Los "ojos" (hannah-sense, :8007), con el mismo trato que las manos: la bandera del .env manda.
-sense_on() { [ "$(envval SENSE_ENABLED)" = "true" ]; }
+sense_on() { [ "$(envval SENSE_ENABLED)" != "false" ]; }
 # El bearer entre el backend y :8007, misma precedencia que el del agente (panel ⚙ → .env →
 # generado y escrito al .env, 0600). Acá el token no es opcional ni en desarrollo: sin él el
 # sidecar contesta 401 en TODO menos /health, así que arrancarlo sin generarlo sería dejar arriba
@@ -251,8 +251,8 @@ doctor() {
   # separa es este contador.
   if sense_on; then
     local counts
-    if counts="$(watch_counts)"; then echo "  vigilancia : SENSE_ENABLED=true · $counts"
-    else echo "  vigilancia : SENSE_ENABLED=true pero :8007 no contesta — NO está mirando nada (mirá $LOG)"; fi
+    if counts="$(watch_counts)"; then echo "  vigilancia : $counts"
+    else echo "  vigilancia : :8007 no contesta — NO está mirando nada (mirá $LOG; ¿falta el venv de sidecar/sense? re-ejecutá install.sh)"; fi
   else
     echo "  vigilancia : apagada (SENSE_ENABLED=false) — no puede quedarse mirando nada"
   fi
@@ -585,13 +585,12 @@ if agent_on; then
       && nohup bun run dev serve --port 8006 >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
-# Los "ojos" (hannah-sense, :8007): SOLO si SENSE_ENABLED=true en el .env del backend, igual que
-# las manos y por la misma razón — sin la bandera el backend ni siquiera arma el vocabulario de
-# [WATCH:], así que un sidecar arriba sería un proceso muestreando para nadie. También antes que
-# el backend, que lee el .env (y el token de acá abajo) al arrancar.
+# Los "ojos" (hannah-sense, :8007): siempre, salvo SENSE_ENABLED=false (escotilla interna). En
+# reposo no muestrea nada, así que no cuesta tenerlo arriba; y va antes que el backend, que lee
+# el .env (y el token de acá abajo) al arrancar.
 if sense_on; then
   if [ ! -x "$BACK/sidecar/sense/.venv/bin/python" ]; then
-    echo "[hannah] SENSE_ENABLED=true pero falta $BACK/sidecar/sense/.venv — sin ojos (SETUP.md §3)" >>"$LOG"
+    echo "[hannah] falta $BACK/sidecar/sense/.venv — sin ojos hasta re-ejecutar install.sh (SETUP.md §3)" >>"$LOG"
   else
     # El token se resuelve ACÁ y no dentro del subshell de fondo: sense_token puede escribir el
     # .env y el backend lo lee al arrancar tres líneas más abajo. Hacerlo en paralelo es una

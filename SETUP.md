@@ -197,14 +197,15 @@ will not pretend it worked.
 
 ## 5c. The eyes (optional): the watches
 
-Also skip this unless you want her to **keep watching something** after the conversation ends
-("check that my training doesn't stop"). It ships **off**, and while it is off the word does not
-even exist for her: the `[WATCH:]` vocabulary is assembled from a live capability probe, so she
-cannot promise a watch nobody would arm.
+This is what lets her **keep watching something** after the conversation ends ("check that my
+training doesn't stop"). It is on by default and needs nothing from you: idle, the sidecar samples
+nothing; the `[WATCH:]` vocabulary is assembled from a live capability probe, so she never
+promises a watch this machine cannot arm. `SENSE_ENABLED=false` in `.env` is an internal escape
+hatch, not a setting.
 
 ```bash
 # hannah-backend/.env
-SENSE_ENABLED=true
+# SENSE_ENABLED=true   # default; false switches the watches off
 # HANNAH_SENSE_TOKEN=   # leave it: ./hannah generates it into the .env (0600) on first start
 ```
 
@@ -238,7 +239,7 @@ bind = SUPER, H, exec, /path/to/Hannah-Motion/hannah
 ```bash
 cd hannah-backend && npm run sidecar:tts     # :8002  (voice — essential)
 cd hannah-backend && npm run sidecar:asr     # :8001  (listening)
-cd hannah-backend && npm run sidecar:sense   # :8007  (the watches; only with SENSE_ENABLED=true)
+cd hannah-backend && npm run sidecar:sense   # :8007  (the watches)
 cd hannah-motion-lab && .venv/bin/python -m uvicorn serve.main:app --port 8005   # gestures
 cd hannah-backend && npm run dev             # :3001  backend
 cd hannah-frontend && npm run dev            # :5173  UI  → open it in the browser
@@ -267,7 +268,7 @@ Then, in the interface: say something to her. You should get **written answer + 
 | the motion-lab's `runs/*.pt` | speaks but **doesn't gesture** while speaking |
 | Ollama / the model | **no answer at all** |
 | ASR sidecar | doesn't understand you by voice (text does work) |
-| the sense venv, with `SENSE_ENABLED=true` | she says she cannot watch anything; `doctor` says `:8007` does not answer |
+| the sense venv | she says she cannot watch anything; `doctor` says `:8007` does not answer |
 
 ---
 

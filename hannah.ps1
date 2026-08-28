@@ -48,7 +48,7 @@ function AgentToken {
   }
   $t
 }
-function SenseOn { (EnvVal 'SENSE_ENABLED') -eq 'true' }
+function SenseOn { (EnvVal 'SENSE_ENABLED') -ne 'false' }
 function SenseToken {
   $t = Settings 'sense' 'token'; if (-not $t) { $t = EnvVal 'HANNAH_SENSE_TOKEN' }
   if (-not $t) {
@@ -84,7 +84,7 @@ switch ($Command) {
     $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
     Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
     Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true · key $(if (AgentKey) { '✓' } else { '✗' })" } else { 'off (AGENT_ENABLED=false)' })"
-    Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { 'SENSE_ENABLED=true but :8007 is not answering' } } else { 'off (SENSE_ENABLED=false)' })"
+    Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { ':8007 is not answering (missing sidecar\sense\.venv? re-run the installer)' } } else { 'off (SENSE_ENABLED=false)' })"
     exit 0
   }
   'stop' {
@@ -109,7 +109,7 @@ $mpy = Join-Path $Lab '.venv\Scripts\python.exe'
 if (-not (Up 8005) -and (Test-Path $mpy)) { StartBg 'motion' $Lab $mpy '-m uvicorn serve.main:app --port 8005' @{ MOTION_DEVICE = 'auto'; PYTHONPATH = (Join-Path $Lab 'src') } }
 # the watches, before the backend so its capability probe finds them
 $spy = Join-Path $Back 'sidecar\sense\.venv\Scripts\python.exe'
-if ((SenseOn) -and (Test-Path $spy) -and -not (Up 8007)) { StartBg 'sense' (Join-Path $Back 'sidecar\sense') $spy '-m uvicorn main:app --host 127.0.0.1 --port 8007' @{ HANNAH_SENSE_TOKEN = (SenseToken) } }
+if ((SenseOn) -and (Test-Path $spy) -and -not (Up 8007)) { StartBg 'sense' (Join-Path $Back 'sidecar\sense') $spy '-m uvicorn main:app --host 127.0.0.1 --port 8007' @{ HANNAH_SENSE_TOKEN = (SenseToken); SENSE_MAX_WATCHES = (EnvVal 'SENSE_MAX_WATCHES'); SENSE_MIN_PERIOD_MS = (EnvVal 'SENSE_MIN_PERIOD_MS'); SENSE_DEBOUNCE_N = (EnvVal 'SENSE_DEBOUNCE_N'); SENSE_BLIND_MS = (EnvVal 'SENSE_BLIND_MS') } }
 if ((AgentOn) -and (Has bun) -and (Test-Path $Agent) -and -not (Up 8006)) {
   $tok = AgentToken
   $aenv = @{ HANNAH_AGENT_TOKEN = $tok; HANNAH_AGENT_SERVER_PASSWORD = $tok; HANNAH_AGENT_MAX_MODE = (EnvVal 'AGENT_MODE'); HANNAH_AGENT_DENY_DIRS = (Join-Path $Back 'data') }
