@@ -90,7 +90,10 @@ doctor() {
     if healthy "${p%%:*}"; then printf ' %s✓' "${p##*:}"; elif up "${p%%:*}"; then printf ' %s⚠(port busy)' "${p##*:}"; else printf ' %s✗' "${p##*:}"; fi
   done; echo
   [ -d "$APP" ] && echo "  app        : $APP ✓" || echo "  app        : $APP ✗ (re-run the installer)"
-  echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | sed -n 's/.*"device": *"\([a-z]*\)".*/on \1/p' || true)"
+  echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | python3 -c 'import json,sys
+try: h=json.load(sys.stdin)
+except Exception: raise SystemExit(1)
+print(("on %s" % h.get("device")) if h.get("ready", True) else ("warming up on %s (first start downloads the text encoder; a minute or two)" % h.get("device")))' 2>/dev/null || echo "not running")"
   agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (AGENT_ENABLED=false)"
   if sense_on; then echo "  watches    : $(watch_counts || echo ':8007 is not answering (missing sidecar/sense/.venv? re-run the installer)')"; else echo "  watches    : off (SENSE_ENABLED=false)"; fi
 }

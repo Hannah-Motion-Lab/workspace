@@ -92,8 +92,8 @@ switch ($Command) {
       if (Healthy $p.Name) { "$($p.Value) ok" } elseif (Up $p.Name) { "$($p.Value) !(port busy)" } else { "$($p.Value) missing" } }
     Write-Host "  services   : $($s -join ' ')"
     Write-Host "  app        : $App $(if (Test-Path $App) { 'ok' } else { 'x (re-run the installer)' })"
-    $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
-    Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
+    $mh = try { Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2 } catch { $null }
+    Write-Host "  gestures   : $(if (-not $mh) { 'not running' } elseif ($mh.ready -eq $false) { "warming up on $($mh.device) (first start downloads the text encoder; a minute or two)" } else { "on $($mh.device)" })"
     # a service that is down should say why, right here: the tail of its error log
     foreach ($svc in 'motion', 'backend', 'tts', 'asr', 'sense', 'agent') {
       $port = @{ motion = 8005; backend = 3001; tts = 8002; asr = 8001; sense = 8007; agent = 8006 }[$svc]
