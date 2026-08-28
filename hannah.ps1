@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot
 $Back = Join-Path $Root 'hannah-backend'
 $Agent = Join-Path $Root 'hannah-agent'
+$Lab = Join-Path $Root 'hannah-motion-lab'
 $App = if ($env:HANNAH_APP) { $env:HANNAH_APP } else { Join-Path $env:LOCALAPPDATA 'Programs\Hannah\Hannah.exe' }
 $Log = Join-Path $Root '.hannah-launch.log'
 $env:Path = "$Root\.tools\git\cmd;$Root\.tools\node;$Root\.tools\ollama;$env:LOCALAPPDATA\Programs\Ollama;$env:USERPROFILE\.local\bin;$env:USERPROFILE\.bun\bin;$env:Path"
@@ -62,11 +63,12 @@ switch ($Command) {
     Write-Host 'Hannah — Windows'
     Write-Host "  root       : $Root"
     $t = foreach ($x in 'node', 'uv', 'bun', 'ollama') { if (Has $x) { "$x✓" } else { "$x✗" } }; Write-Host "  tools      : $($t -join ' ')"
-    $s = foreach ($p in @{11434='ollama'; 8002='tts'; 8001='asr'; 3001='backend'; 8006='agent'}.GetEnumerator() | Sort-Object Name) {
+    $s = foreach ($p in @{11434='ollama'; 8002='tts'; 8001='asr'; 8005='motion'; 3001='backend'; 8006='agent'}.GetEnumerator() | Sort-Object Name) {
       if (Healthy $p.Name) { "$($p.Value)✓" } elseif (Up $p.Name) { "$($p.Value)⚠(port busy)" } else { "$($p.Value)✗" } }
     Write-Host "  services   : $($s -join ' ')"
     Write-Host "  app        : $App $(if (Test-Path $App) { '✓' } else { '✗ (re-run the installer)' })"
-    Write-Host '  gestures   : off (the motion model is Linux/CUDA only)'
+    $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
+    Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
     Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true · key $(if (AgentKey) { '✓' } else { '✗' })" } else { 'off (AGENT_ENABLED=false)' })"
     exit 0
   }
@@ -87,6 +89,9 @@ if (-not (Healthy 11434) -and (Has ollama)) { Start-Process -WindowStyle Hidden 
 $py = Join-Path $Back 'sidecar\.venv\Scripts\python.exe'
 if (-not (Up 8002)) { StartBg 'tts' (Join-Path $Back 'sidecar\tts') $py '-m uvicorn main:app --port 8002' @{ TTS_DEVICE = 'cpu' } }
 if (-not (Up 8001)) { StartBg 'asr' (Join-Path $Back 'sidecar\asr') $py '-m uvicorn main:app --port 8001' @{ ASR_DEVICE = 'cpu' } }
+# gestures: the NVIDIA card if there is one, else the CPU — never skipped
+$mpy = Join-Path $Lab '.venv\Scripts\python.exe'
+if (-not (Up 8005) -and (Test-Path $mpy)) { StartBg 'motion' $Lab $mpy '-m uvicorn serve.main:app --port 8005' @{ MOTION_DEVICE = 'auto'; PYTHONPATH = (Join-Path $Lab 'src') } }
 if ((AgentOn) -and (Has bun) -and (Test-Path $Agent) -and -not (Up 8006)) {
   $tok = AgentToken
   $aenv = @{ HANNAH_AGENT_TOKEN = $tok; HANNAH_AGENT_SERVER_PASSWORD = $tok; HANNAH_AGENT_MAX_MODE = (EnvVal 'AGENT_MODE') }
@@ -96,7 +101,7 @@ if ((AgentOn) -and (Has bun) -and (Test-Path $Agent) -and -not (Up 8006)) {
 if (-not (Up 3001)) { StartBg 'backend' $Back 'node' 'src\server.js' @{} }
 for ($i = 0; $i -lt 60 -and -not (Healthy 3001); $i++) { Start-Sleep 1 }
 if (-not (Healthy 3001)) { Write-Host "hannah: the backend did not come up — see $Logs\backend.err.log"; exit 1 }
-foreach ($p in 8001, 8002, 8006) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
+foreach ($p in 8001, 8002, 8005, 8006) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
 if (Test-Path $App) {
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # it holds a single-instance lock, so a second launch just focuses the existing window

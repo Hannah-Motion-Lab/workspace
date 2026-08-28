@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hannah — launcher for macOS. Installed as `hannah` by install-mac.sh (symlink in ~/.local/bin).
-#   hannah            bring up Ollama + voice/listening sidecars + backend (+ agent) and open the overlay
+#   hannah            bring up Ollama + voice/listening/gesture sidecars + backend (+ agent) and open the overlay
 #   hannah stop       shut it all down (add --keep-ollama to leave the model server running)
 #   hannah doctor     what is running and what is missing
 # Everything runs in the user's session, no admin. Log: $ROOT/.hannah-launch.log
@@ -12,6 +12,7 @@ self="$0"; while [ -L "$self" ]; do t="$(readlink "$self")"; case "$t" in /*) se
 ROOT="$(cd "$(dirname "$self")" && pwd)"
 BACK="$ROOT/hannah-backend"
 AGENT="$ROOT/hannah-agent"
+LAB="$ROOT/hannah-motion-lab"
 APP="${HANNAH_APP:-$HOME/Applications/Hannah.app}"
 LOG="$ROOT/.hannah-launch.log"
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$ROOT/.tools/node/bin:$PATH"
@@ -64,11 +65,11 @@ doctor() {
   echo "  root       : $ROOT"
   printf '  tools      :'; for t in node uv bun ollama; do has $t && printf ' %s✓' $t || printf ' %s✗' $t; done; echo
   printf '  services   :'
-  for p in 11434:ollama 8002:tts 8001:asr 3001:backend 8006:agent; do
+  for p in 11434:ollama 8002:tts 8001:asr 8005:motion 3001:backend 8006:agent; do
     if healthy "${p%%:*}"; then printf ' %s✓' "${p##*:}"; elif up "${p%%:*}"; then printf ' %s⚠(port busy)' "${p##*:}"; else printf ' %s✗' "${p##*:}"; fi
   done; echo
   [ -d "$APP" ] && echo "  app        : $APP ✓" || echo "  app        : $APP ✗ (re-run the installer)"
-  echo "  gestures   : off (the motion model is CUDA-only)"
+  echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | sed -n 's/.*"device": *"\([a-z]*\)".*/on \1/p' || true)"
   agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (AGENT_ENABLED=false)"
 }
 
@@ -95,6 +96,8 @@ healthy 11434 || { has ollama && (nohup ollama serve >>"$LOG" 2>&1 &); }
 PY="$BACK/sidecar/.venv/bin/python"
 up 8002 || ( cd "$BACK/sidecar/tts" && TTS_DEVICE=cpu nohup "$PY" -m uvicorn main:app --port 8002 >>"$LOG" 2>&1 & )
 up 8001 || ( cd "$BACK/sidecar/asr" && ASR_DEVICE=cpu nohup "$PY" -m uvicorn main:app --port 8001 >>"$LOG" 2>&1 & )
+# gestures: Apple's GPU (MPS) if there is one, else the CPU — never skipped
+up 8005 || ( cd "$LAB" && [ -x .venv/bin/python ] && MOTION_DEVICE=auto PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
 if agent_on && has bun && [ -d "$AGENT" ]; then
   up 8006 || ( cd "$AGENT" && tok="$(agent_token)" \
     && export HANNAH_AGENT_TOKEN="$tok" HANNAH_AGENT_SERVER_PASSWORD="$tok" HANNAH_AGENT_MAX_MODE="$(envval AGENT_MODE)" "$(agent_key_var)=$(agent_key)" \
@@ -103,7 +106,7 @@ fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & )
 for _ in $(seq 1 60); do healthy 3001 && break; sleep 1; done
 healthy 3001 || { echo "hannah: the backend did not come up — see $LOG"; exit 1; }
-for p in 8001 8002 8006; do up "$p" && ! healthy "$p" && echo "[hannah] WARNING: port $p is busy with something else" >>"$LOG"; done
+for p in 8001 8002 8005 8006; do up "$p" && ! healthy "$p" && echo "[hannah] WARNING: port $p is busy with something else" >>"$LOG"; done
 if [ -d "$APP" ]; then
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # the open command also just focuses it if it is already running

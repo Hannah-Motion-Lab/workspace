@@ -370,11 +370,10 @@ paste a key). Vision and memory recall follow that choice (on with a local brain
 provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the status behind it.
 
 Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
-voice and listening sidecars on the CPU, the backend and the overlay app; `hannah stop` and
-`hannah doctor` work as on Linux. What differs from Linux: the voice runs on the CPU (~1–2 s per
-sentence) and there is **no gesture model** (CUDA-only) — the avatar idles and looks around but
-does not gesture while speaking. The Linux `hannah` launcher itself is Linux-only (it leans on
-`ss`, `/proc`, `ip` and the X11/Hyprland adapters).
+voice and listening sidecars on the CPU, the gesture model (`MOTION_DEVICE=auto`: CUDA if there
+is one, else Apple's MPS, else the CPU — slower but never skipped), the backend and the overlay
+app; `hannah stop` and `hannah doctor` work as on Linux. The Linux `hannah` launcher itself is
+Linux-only (it leans on `ss`, `/proc`, `ip` and the X11/Hyprland adapters).
 
 If you would rather do it by hand, this is what the installers do — the **overlay app** is built
 for you ([releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
@@ -390,8 +389,9 @@ the rest of the stack goes in your user folder:
   wheel — swap it for `onnxruntime` (`sed 's/onnxruntime-gpu==.*/onnxruntime/' requirements.txt > req-cpu.txt`)
   and run the TTS with `TTS_DEVICE=cpu`. Whisper runs on CPU as is. Expect ~1–2 s per sentence
   for the voice on Apple Silicon.
-- **No gestures**: the motion model is CUDA-only; set `MOTION_ENABLED=false` in `.env` and the
-  procedural idle takes over.
+- **Gestures on any device**: `hannah-motion-lab` with `requirements-serve.txt` (torch from PyPI on
+  macOS, from the cu128 or cpu index elsewhere) and the weights from the `models` release; the
+  server picks CUDA → MPS → CPU by itself.
 - **Run it** (four terminals from `hannah-backend`): `TTS_DEVICE=cpu npm run sidecar:tts`,
   `npm run sidecar:asr`, `npm run dev`; then `HANNAH_HTTP=1 npm run dev` in `hannah-frontend`
   and open the overlay app (or `HANNAH_DEV=1 npm start` in `hannah-desktop` to use the dev server).
