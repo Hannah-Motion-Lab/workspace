@@ -1,4 +1,4 @@
-# Hannah — launcher for Windows. `hannah.cmd` next to this file makes it a plain `hannah` command
+# Hannah , launcher for Windows. `hannah.cmd` next to this file makes it a plain `hannah` command
 # (install.ps1 adds this folder to your user PATH).
 #   hannah            bring up Ollama + voice/listening sidecars + backend (+ agent) and open the overlay
 #   hannah stop       shut it all down (add -KeepOllama to leave the model server running)
@@ -60,7 +60,7 @@ function SenseToken {
   $t
 }
 function WatchCounts {
-  try { $w = (Invoke-RestMethod 'http://127.0.0.1:8007/health' -TimeoutSec 2).watches; "$($w.armed) armed · $($w.blind) blind · $($w.suspended) suspended" } catch { '' }
+  try { $w = (Invoke-RestMethod 'http://127.0.0.1:8007/health' -TimeoutSec 2).watches; "$($w.armed) armed - $($w.blind) blind - $($w.suspended) suspended" } catch { '' }
 }
 # our own processes: anchored to this checkout's path (never other apps)
 function OwnProcs { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Root\*" -and $_.ProcessId -ne $PID } }
@@ -74,37 +74,37 @@ function StartBg($name, $dir, $exe, $args, $extraEnv) {
 
 switch ($Command) {
   'doctor' {
-    Write-Host 'Hannah — Windows'
+    Write-Host 'Hannah , Windows'
     Write-Host "  root       : $Root"
-    $t = foreach ($x in 'node', 'uv', 'bun', 'ollama') { if (Has $x) { "$x✓" } else { "$x✗" } }; Write-Host "  tools      : $($t -join ' ')"
+    $t = foreach ($x in 'node', 'uv', 'bun', 'ollama') { if (Has $x) { "$x ok" } else { "$x missing" } }; Write-Host "  tools      : $($t -join ' ')"
     $s = foreach ($p in @{11434='ollama'; 8002='tts'; 8001='asr'; 8005='motion'; 3001='backend'; 8006='agent'; 8007='sense'}.GetEnumerator() | Sort-Object Name) {
-      if (Healthy $p.Name) { "$($p.Value)✓" } elseif (Up $p.Name) { "$($p.Value)⚠(port busy)" } else { "$($p.Value)✗" } }
+      if (Healthy $p.Name) { "$($p.Value) ok" } elseif (Up $p.Name) { "$($p.Value) !(port busy)" } else { "$($p.Value) missing" } }
     Write-Host "  services   : $($s -join ' ')"
-    Write-Host "  app        : $App $(if (Test-Path $App) { '✓' } else { '✗ (re-run the installer)' })"
+    Write-Host "  app        : $App $(if (Test-Path $App) { 'ok' } else { 'x (re-run the installer)' })"
     $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
     Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
-    Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true · key $(if (AgentKey) { '✓' } else { '✗' })" } else { 'off (AGENT_ENABLED=false)' })"
+    Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true - key $(if (AgentKey) { 'ok' } else { 'x' })" } else { 'off (AGENT_ENABLED=false)' })"
     Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { ':8007 is not answering (missing sidecar\sense\.venv? re-run the installer)' } } else { 'off (SENSE_ENABLED=false)' })"
     exit 0
   }
   'stop' {
-    Write-Host 'Hannah — shutting down:'
+    Write-Host 'Hannah , shutting down:'
     Get-Process -Name Hannah -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $App } | Stop-Process -Force -ErrorAction SilentlyContinue
-    Write-Host '  overlay ✓'
+    Write-Host '  overlay ok'
     OwnProcs | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Write-Host '  backend, sidecars, agent ✓'
-    if (-not $KeepOllama) { Get-Process -Name ollama -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Write-Host '  ollama ✓' } else { Write-Host '  ollama kept' }
+    Write-Host '  backend, sidecars, agent ok'
+    if (-not $KeepOllama) { Get-Process -Name ollama -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Write-Host '  ollama ok' } else { Write-Host '  ollama kept' }
     exit 0
   }
 }
 
-if (-not (Test-Path (Join-Path $Back '.env'))) { Write-Host "hannah: $Back\.env is missing — run the installer first"; exit 1 }
+if (-not (Test-Path (Join-Path $Back '.env'))) { Write-Host "hannah: $Back\.env is missing , run the installer first"; exit 1 }
 Add-Content $Log "[hannah] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') up"
 if (-not (Healthy 11434) -and (Has ollama)) { Start-Process -WindowStyle Hidden -FilePath 'ollama' -ArgumentList 'serve' }
 $py = Join-Path $Back 'sidecar\.venv\Scripts\python.exe'
 if (-not (Up 8002)) { StartBg 'tts' (Join-Path $Back 'sidecar\tts') $py '-m uvicorn main:app --port 8002' @{ TTS_DEVICE = 'cpu' } }
 if (-not (Up 8001)) { StartBg 'asr' (Join-Path $Back 'sidecar\asr') $py '-m uvicorn main:app --port 8001' @{ ASR_DEVICE = 'cpu' } }
-# gestures: the NVIDIA card if there is one, else the CPU — never skipped
+# gestures: the NVIDIA card if there is one, else the CPU , never skipped
 $mpy = Join-Path $Lab '.venv\Scripts\python.exe'
 if (-not (Up 8005) -and (Test-Path $mpy)) { StartBg 'motion' $Lab $mpy '-m uvicorn serve.main:app --port 8005' @{ MOTION_DEVICE = 'auto'; PYTHONPATH = (Join-Path $Lab 'src') } }
 # the watches, before the backend so its capability probe finds them
@@ -118,12 +118,12 @@ if ((AgentOn) -and (Has bun) -and (Test-Path $Agent) -and -not (Up 8006)) {
 }
 if (-not (Up 3001)) { StartBg 'backend' $Back 'node' 'src\server.js' @{} }
 for ($i = 0; $i -lt 60 -and -not (Healthy 3001); $i++) { Start-Sleep 1 }
-if (-not (Healthy 3001)) { Write-Host "hannah: the backend did not come up — see $Logs\backend.err.log"; exit 1 }
+if (-not (Healthy 3001)) { Write-Host "hannah: the backend did not come up , see $Logs\backend.err.log"; exit 1 }
 foreach ($p in 8001, 8002, 8005, 8006, 8007) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
 if (Test-Path $App) {
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # it holds a single-instance lock, so a second launch just focuses the existing window
   Start-Process -FilePath $App
 } else {
-  Write-Host "hannah: $App not found — re-run the installer, or open http://localhost:3001/test-client.html"
+  Write-Host "hannah: $App not found , re-run the installer, or open http://localhost:3001/test-client.html"
 }
