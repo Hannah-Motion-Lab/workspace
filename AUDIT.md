@@ -563,7 +563,8 @@ not cover. They are the next section.
 Two more passes over the same phase, by people who had not built it and had not
 run the pass above. **Round three** probed a live stack whose model provider was
 genuinely failing, and produced ten commits; **round four** produced four, every
-one of them inside the restart detection round three had just introduced. Four of
+one of them inside code round three had itself just added: three in its restart
+detection, one in the delivery ceiling its acknowledgement fix created. Four of
 the fourteen are security-class and are written up here, for the reason this file
 already gives: **a roadmap entry is not a substitute.** The rest are correctness
 and sit in `agent/docs/ROADMAP.md`, Phase 5, each beside the claim it falsified.
