@@ -94,6 +94,15 @@ switch ($Command) {
     Write-Host "  app        : $App $(if (Test-Path $App) { 'ok' } else { 'x (re-run the installer)' })"
     $mdev = try { (Invoke-RestMethod 'http://127.0.0.1:8005/health' -TimeoutSec 2).device } catch { '' }
     Write-Host "  gestures   : $(if ($mdev) { "on $mdev" } else { 'not running' })"
+    # a service that is down should say why, right here: the tail of its error log
+    foreach ($svc in 'motion', 'backend', 'tts', 'asr', 'sense', 'agent') {
+      $port = @{ motion = 8005; backend = 3001; tts = 8002; asr = 8001; sense = 8007; agent = 8006 }[$svc]
+      $errLog = Join-Path $Logs "$svc.err.log"
+      if (-not (Healthy $port) -and (Test-Path $errLog) -and (Get-Item $errLog).Length -gt 0) {
+        Write-Host "  --- $svc is down; last lines of $errLog :" -ForegroundColor Yellow
+        Get-Content $errLog -Tail 8 | ForEach-Object { Write-Host "      $_" }
+      }
+    }
     Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true - key $(if (AgentKey) { 'ok' } else { 'x' })" } else { 'off (AGENT_ENABLED=false)' })"
     Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { ':8007 is not answering (missing sidecar\sense\.venv? re-run the installer)' } } else { 'off (SENSE_ENABLED=false)' })"
     exit 0
