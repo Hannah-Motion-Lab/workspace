@@ -77,9 +77,9 @@ function WatchCounts {
 function OwnProcs { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Root\*" -and $_.ProcessId -ne $PID } }
 # one log per service under <root>\.hannah-logs (two processes cannot share one redirected file)
 $Logs = Join-Path $Root '.hannah-logs'; New-Item -ItemType Directory -Force -Path $Logs | Out-Null
-function StartBg($name, $dir, $exe, $args, $extraEnv) {
+function StartBg($name, $dir, $exe, $argList, $extraEnv) {
   foreach ($k in $extraEnv.Keys) { Set-Item "env:$k" $extraEnv[$k] }
-  Start-Process -WindowStyle Hidden -WorkingDirectory $dir -FilePath $exe -ArgumentList $args -RedirectStandardOutput (Join-Path $Logs "$name.log") -RedirectStandardError (Join-Path $Logs "$name.err.log")
+  Start-Process -WindowStyle Hidden -WorkingDirectory $dir -FilePath $exe -ArgumentList $argList -RedirectStandardOutput (Join-Path $Logs "$name.log") -RedirectStandardError (Join-Path $Logs "$name.err.log")
   foreach ($k in $extraEnv.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
 }
 
