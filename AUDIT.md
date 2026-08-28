@@ -541,7 +541,8 @@ invisible**, which is the agent's whole name-based path model and not this file'
 | frontend `fa8c276` | the settings panel called `GET /api/v1/watches`, which 403s every browser by design, and its `catch` painted *"Nada vigilado ahora mismo"*: the screen asserting the one thing it had just failed to find out |
 | frontend `842016d` | a terminal watch pill never left the screen, and every snapshot restarted its countdown |
 
-**Verification run, 2026-08-27, after all thirteen:** backend `npm test`
+**Verification run, 2026-08-27, after all thirteen** (superseded by the
+2026-08-28 run in the next section): backend `npm test`
 **216 ✓ / 18 suites, 0 failures** · `backend/sidecar/sense` pytest **120 ✓** ·
 frontend `vitest run` **34 ✓ / 4 files** · agent `bun test test/hannah/`
 **341 ✓ / 12 files**.
@@ -550,4 +551,141 @@ frontend `vitest run` **34 ✓ / 4 files** · agent `bun test test/hannah/`
 trial (`agent/docs/KNOWN-GAPS.md` #19): "did she notice, and did she notice
 **once**?" is still answered by unit tests over fake time plus one run somebody
 did by hand. Everything above was found by reading code and probing a live
-sidecar; a real trial would have caught two of them on its own.
+sidecar; a real trial would have caught two of them on its own. **Nor was this
+pass the last one**: two more followed on 2026-08-28 and found four more
+security-class defects, three of them the same rule as V1 through channels V1 did
+not cover. They are the next section.
+
+---
+
+## P5.1 verified again — 2026-08-28 (rounds three and four)
+
+Two more passes over the same phase, by people who had not built it and had not
+run the pass above. **Round three** probed a live stack whose model provider was
+genuinely failing, and produced ten commits; **round four** produced four, every
+one of them inside the restart detection round three had just introduced. Four of
+the fourteen are security-class and are written up here, for the reason this file
+already gives: **a roadmap entry is not a substitute.** The rest are correctness
+and sit in `agent/docs/ROADMAP.md`, Phase 5, each beside the claim it falsified.
+
+Three of the four are the **same rule** as V1 — *the words a person dictated
+belong to that person* — arriving through three channels V1 did not cover: the
+HUD's screen, the model's prompt on every trip, and the notice that a trip was
+given up on. V1 closed the spoken trip. That is worth naming, because it is the
+shape of the whole round: a rule fixed on one road is not a rule until every road
+is checked.
+
+And the round that found them repeated the failure this file recorded last time,
+in a new form. Round three shipped `backend/tests/unit/senseRestart.test.js` with
+a filter written into it — `narrated.filter(n => /LOST SIGHT/.test(n.prompt))` —
+under a docstring calling the sentence it filtered out a neighbouring defect
+fixable in one line, while the test's own title claimed *"a one-second restart
+does not leave the person believing she is being watched."* The person was left
+believing exactly that. Round four deleted the filter and made the test assert
+the sentence (`34f63ce`). Last time it was a claim in three places; this time it
+was a claim in a test title with a filter underneath it holding the green.
+
+### V3 · The label of a watch was announced to every attached HUD
+`hannah-backend/src/pipeline/senseBridge.js` — `armedMsg()`, the attach snapshot, the orphan re-send.
+**Fixed in backend `ce847d4`.**
+`armedMsg` went out by broadcast, and again in the snapshot every attaching HUD
+receives, carrying the free text a person dictated. So any connected HUD was
+handed another session's words — including the words of a session that had died
+in an earlier backend process, because a watch row lives in the process and
+outlives the socket that armed it. This is V1's rule one channel over: V1 was what
+she **says**, this is what is **drawn**, and fixing the first did not fix the
+second.
+The envelope is now built per recipient. Whoever did not arm the watch sees that
+the row exists, what state it is in and what sensor is looking, and the `mine`
+field says whose it is. The orphan re-send does not put the label on the socket
+either: that sentence belongs to the voice, which frames it.
+
+### V4 · The label reached the model on every trip
+`hannah-backend/src/pipeline/senseBridge.js` — the trip prompt, and `eyesPrompt`.
+**Fixed in backend `8156c70`.**
+`680c1c6`, from the round above, sanitised the *permanent* channel — the label
+that `watchStatus()` puts into the system prompt of every action turn — and left
+the per-trip channel open, which is worse in the way that matters: a trip fires
+when the user is not looking, at 3am, at whatever hour the thing she was watching
+stopped. That path still used `clean()`, which strips markdown delimiters and
+then collapses the separators into spaces, so a label carrying a tag, a path, a
+host and a URL arrived at the model very nearly whole.
+It now goes through the same `watchLabel()` as the permanent channel, and it goes
+through `eyesPrompt`, which is the one place all seven of this feature's sentences
+pass. The plan's T9 forbids interpolating **observed** text into a prompt; the
+label is not observed text, it is the user's own, but it is the only free text
+this feature has and it reaches the model on two separate roads. Both are closed
+now; the reason there were two is that the second one was never listed.
+
+### V5 · A trip with no owner left was read aloud to a stranger
+`hannah-backend/src/pipeline/senseBridge.js` — `flushInbox()`, `tryDeliver()`.
+**Fixed in backend `422171f`.**
+V1 stopped the *watch* being handed to the newest session. The **trip already in
+the inbox** whose owning conversation had since expired was still narrated to
+whoever was connected, with a sentence that hedged the attribution — *something
+you may not have asked for stopped* — and a hedge does not change what is in the
+sentence: one person's own words about their own work, in another person's ear.
+Plan §10 leaves no room here, and the tension was resolved in the plan's favour:
+if the session that armed it no longer exists, the trip is persisted and is not
+spoken to a third party. `tryDeliver()` no longer takes a recipient argument at
+all, so it is structurally incapable of speaking to anyone but the owner.
+**The cost is stated rather than hidden**: such a trip is then never spoken to
+anybody. It stays in the inbox, counted in `pending` by `GET /api/v1/health`
+(which is what the launcher's `vigilancia:` line reads) with one `warn` in the
+log, and it can eventually be evicted by newer trips. Filed as
+`agent/docs/KNOWN-GAPS.md` #26, because "she never told me it stopped" is a thing
+a user will one day say.
+
+### V6 · The give-up notice was broadcast with another session's label
+`hannah-backend/src/pipeline/senseBridge.js` — `failedDelivery()`.
+**Fixed in backend `7bed4d9`.**
+The notice with which a trip is abandoned after several failed attempts went out
+by broadcast, so a label dictated by one session was written onto the screen of
+every other one connected. Same rule as V3, through a third channel — and this
+one was **opened by a fix from the same round**: the give-up path did not exist
+before the delivery acknowledgement (`742339d`) created it. A fix is a new place
+for a defect to live, which is the argument for reviewing a round's own output.
+It goes to its owner. If her socket is closed, what remains is the log line and
+the pending counter, which is exactly what was decided for the orphan trip in V5.
+
+### The other ten, one line each
+
+| Fix | Round | What it was |
+|---|---|---|
+| backend `1db1110` | 3 | **a sidecar restart passed in complete silence.** `sse_starlette` kills every `EventSourceResponse` on `SIGTERM`, which is *before* the lifespan that publishes `watch.disarmed {shutdown}`, and `kill -9` publishes nothing; the ring dies with the process, so nothing replays. A one-second `systemctl restart` is far under `SENSE_BLIND_MS`, so the blindness clock never wakes either: the stream returns to `up`, reconciliation writes `suspended`, and the person who armed the watch goes on believing she is being looked at. The subscription reads `boot=` now, and a changed boot is itself the proof, because A4 says what was persisted comes back `suspended` and never armed |
+| backend `742339d` | 3 | **a trip left the inbox before anyone knew it had been said.** `processTextTurn` catches its own errors, so with the model down it resolved anyway and the narration counted as delivered: the trip came out of the inbox, the file was left empty, nobody heard anything, ever. The turn now returns whether it **spoke**, and a trip is written to disk before speaking and erased only on the acknowledgement |
+| backend `8aca0f2` | 3 | the sidecar's `main.py` and `registry.py` had **no tests at all**, and three mutations left the whole suite green: the `Origin` 403 turned into a no-op, an empty token opening every route, and persisted rows loaded as `armed` instead of `suspended`. Those are the guards this file describes in the table above, and the deliberate divergence from the façade, and assumption A4 |
+| backend `f65b703` | 3 | the two load-bearing pieces of V2's own fix had nothing asserting them: deleting `O_NOFOLLOW` left the suite green, and so did deleting the `" (deleted)"` suffix strip, without which the basename rules stop matching and a well-placed `unlink` skips the verification entirely |
+| backend `34f63ce` | 4 | reconciling towards `if (w.state !== 'blind')` counted a `suspended` row as recovered, and `suspended` is exactly the row a sidecar restart produces. The person heard *"la perdí"* and immediately *"ya la veo de nuevo"* with `/health` at `armed:0`, and the second sentence is the one that stays |
+| backend `bb672d1` | 4 | a restart with the HUD closed was never counted at all, so §10's headline case (3am, tab closed) went unsaid. The client only announces now; the bridge decides in one place what a restart means for every row, resets the `seq` that was swallowing the new boot's first event, and terminates what the sidecar no longer has instead of leaving a zombie |
+| backend `922333e` | 4 | **a trip already spoken was re-filed on every backend start.** The ring replays whole to any subscriber without `Last-Event-ID`, which is every fresh backend process, so the inbox went 3 → 7 → 10 on ghosts, shouting *"buzón lleno"* — the one alarm that must mean a real trip was lost — with `/health` at `pending:10` and not a single uncounted trip. The bridge now persists `(boot, cursor)` beside the inbox. What it does **not** have is an acknowledgement on the wire: `agent/docs/KNOWN-GAPS.md` #23, rewritten onto that |
+| backend `f460ee7` | 4 | **a trip that gave up was never retried, even when the voice came back.** The ceiling claimed to count consecutive failures but its only reset was the acknowledgement of *another* inbox row, unreachable when the given-up trip is the only one stored, which is the normal case. Three HUD reloads during a provider 401 silenced a real trip forever while it stayed counted as pending. Giving up is visible now: `undelivered` to its owner, `stalled` in `/api/v1/health` |
+| frontend `6f35661` | 3 | the HUD dropped `sensorKind` off `watch_armed`, so a panel row could never say what she is looking *with*, with both sides believing the field travelled |
+| frontend `fe62bd3` | 3 | the panel decided "nothing is watched" on one axis, the socket. With the socket attached and the sidecar down, `/api/v1/health` was already answering `watches.error = sense_unavailable` and the view discarded it, writing *"Nada vigilado ahora mismo"* over two watches that existed. Same failure as `fa8c276`, one axis further out |
+
+Two of those ten are worth a second look by anyone auditing this file rather than
+the code: `8aca0f2` and `f65b703` add no behaviour. They are the tests that hold
+findings **already written above** — the sidecar's guards, and V2's `open_watched`.
+Both were mutable to no-ops with the full suite green, which means that until
+2026-08-28 the entry in this file was the only thing holding them.
+
+**Verification run, 2026-08-28, executed for this note and not copied from any
+commit or any report:** backend `npm test` **242 ✓ / 19 suites, 0 failures** ·
+`backend/sidecar/sense` `npm run test:sense` **192 ✓ / 8 files** · frontend
+`vitest run` **44 ✓ / 5 files**, `eslint` clean, `vite build` clean · agent
+`bun test test/hannah/` **341 ✓ / 12 files**. The numbers this file carried until
+now — 216 ✓ / 18 suites, 120 ✓, 34 ✓ / 4 files — were true of the round that
+wrote them and are the state of nothing today.
+
+**Not closed by these two rounds.** P5.1's exit demo is *still* not a committed
+repeatable trial after four rounds (`agent/docs/KNOWN-GAPS.md` #19): "did she
+notice, and did she notice **once**?" is still answered by unit tests over fake
+time plus a run somebody did by hand on 2026-08-27. ADR-0013 and the T9–T12 rows
+this plan owes `agent/docs/SECURITY.md` are still not written (#21). And round
+four filed three residuals rather than fixing them: `senseBridge.snapshot()`
+exports the raw label and the arming `sessionId` and has no production caller,
+which is V3 waiting to be re-opened by whoever wants a watch list in
+`/api/v1/health` (#24); a refused `[WATCH:]` writes the **watched path** into
+`.hannah-launch.log`, an ordinary file at the workspace root created with the
+default umask and on nobody's denylist, which is the road `72d63bf` did not close
+(#25); and the orphan trip nobody is ever told about (#26).
