@@ -10,6 +10,7 @@ hannah-site/
 # artefactos locales
 *.log
 .hannah-launch.log
+.hannah-install.log
 .hannah.lock
 # tooling local
 .tools/

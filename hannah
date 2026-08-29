@@ -24,17 +24,17 @@ ROOT="$(cd "$(dirname "$SELF")" && pwd)"
 # apuntaban todos a carpetas inexistentes: cada `cd "$BACK"` fallaba y el servicio no arrancaba
 # sin decir por qué. `cd -P` porque la ruta se compara luego contra /proc/<pid>/cwd, que viene
 # con los symlinks ya resueltos.
-sibling() {
+sibling() {   # sibling <instalado> <dev> [optional]: con "optional" no avisa si falta
   local inst="$1" dev="$2" d
   for d in "$ROOT/$inst" "$ROOT/$dev" "$ROOT/../$inst" "$ROOT/../$dev"; do
     [ -d "$d" ] && { (cd -P "$d" && pwd); return 0; }
   done
-  echo "hannah: no encuentro el repo '$inst' (ni '$dev') junto a $ROOT ni en su padre" >&2
+  [ "${3:-}" = optional ] || echo "hannah: no encuentro el repo '$inst' (ni '$dev') junto a $ROOT ni en su padre" >&2
   printf '%s' "$ROOT/$inst"   # ruta nominal: los mensajes siguientes siguen nombrando algo
   return 1
 }
 BACK="$(sibling hannah-backend backend)"
-FRONT="$(sibling hannah-frontend frontend)"
+FRONT="$(sibling hannah-frontend frontend optional)"   # opcional: el AppImage lleva su frontend
 LAB="$(sibling hannah-motion-lab motion-model)"
 LOG="$ROOT/.hannah-launch.log"
 PROFILE="${HANNAH_PROFILE:-$HOME/.hannah-browser}"     # perfil Firefox/Zen (Gecko)
@@ -46,7 +46,19 @@ DESK="$(sibling hannah-desktop desktop)"
 #                            en GNOME/KDE/XFCE/Hyprland (fuerza XWayland).
 #   browser               -> el frontend en un navegador en modo-app; más liviano, pero para
 #                            que flote depende de hyprctl/wmctrl y en Wayland nativo no puede.
-MODE="${HANNAH_MODE:-app}"
+APPIMAGE="${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}"
+resolve_mode() {   # app -> appimage (o navegador) si no hay Electron de desarrollo instalado
+  local m="${HANNAH_MODE:-app}"
+  if [ "$m" = app ] && [ ! -x "$DESK/node_modules/electron/dist/electron" ]; then
+    if [ -x "$APPIMAGE" ]; then m=appimage; else m=browser; fi
+  fi
+  printf '%s' "$m"
+}
+MODE="$(resolve_mode)"
+# Vite solo hace falta cuando el frontend se sirve desde el repo: app de desarrollo, navegador,
+# services, o el AppImage con HANNAH_DEV=1 (para probar cambios del frontend sin release). El
+# AppImage del instalador lleva su propio frontend empaquetado, como la app de Mac y Windows.
+needs_vite() { [ "$MODE" != appimage ] || [ -n "${HANNAH_DEV:-}" ]; }
 
 # ── El catálogo de servicios: UNA sola lista ──────────────────────────────────
 # Puerto, nombre y quién lo arranca. Había TRES listas de puertos escritas a mano —la del apagado
@@ -132,7 +144,7 @@ for line in lines:
     print(v); break
 PY
 }
-AGENT="$(sibling hannah-agent agent)"
+AGENT="$(sibling hannah-agent agent optional)"   # opcional: lo trae `hannah hands on`
 agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 # El bearer entre backend y agente. Si el .env no lo trae se genera aquí y se escribe en el
 # .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente (AUDIT C3/C4).
@@ -214,9 +226,14 @@ doctor() {
   local r n d
   for r in "backend:$BACK" "frontend:$FRONT" "motion:$LAB" "desktop:$DESK" "agent:$AGENT"; do
     n="${r%%:*}"; d="${r#*:}"
-    if [ -d "$d" ]; then printf ' %s✓' "$n"; else printf ' %s✗(%s)' "$n" "$d"; fi
+    if [ -d "$d" ]; then printf ' %s✓' "$n"
+    elif [ "$n" = frontend ] && ! needs_vite; then printf ' frontend–'
+    elif [ "$n" = agent ] && ! agent_on; then printf ' agent–'
+    else printf ' %s✗(%s)' "$n" "$d"; fi
   done
   echo
+  { [ ! -d "$FRONT" ] && ! needs_vite; } && echo "               – frontend: no hace falta, el AppImage lleva el suyo (HANNAH_DEV=1 lo usaría)"
+  { [ ! -d "$AGENT" ] && ! agent_on; } && echo "               – agent: las manos se instalan con 'hannah hands on'"
   printf '  servicios  :'
   # Del catálogo, no de una tercera lista: 8003 faltaba acá y por eso nadie notó durante meses
   # que se apagaba un servicio que no se arrancaba. Ollama se agrega al vuelo (no está en el
@@ -224,7 +241,8 @@ doctor() {
   local port role name manual_down=""
   for r in $SERVICE_CATALOG 11434:ollama:auto; do
     port="${r%%:*}"; name="${r#*:}"; role="${name#*:}"; name="${name%%:*}"
-    if healthy "$port"; then printf ' %s✓' "$name"
+    if [ "$port" = 5173 ] && ! needs_vite && ! up 5173; then printf ' vite–'
+    elif healthy "$port"; then printf ' %s✓' "$name"
     elif up "$port"; then printf ' %s⚠(puerto ocupado por otra cosa)' "$name"
     elif [ "$role" = manual ]; then printf ' %s–' "$name"; manual_down=1
     else printf ' %s✗' "$name"; fi
@@ -250,7 +268,7 @@ doctor() {
     [ -n "$(agent_key)" ] && printf ' · key ✓' || printf ' · key FALTA: panel ⚙, o ANTHROPIC_API_KEY / OPENROUTER_API_KEY en .env (cada tarea fallará al modelo)'
     echo
   else
-    echo "  manos      : apagadas (AGENT_ENABLED=false) — Hannah conversa y ejecuta comandos simples, sin tareas de varios pasos"
+    echo "  manos      : apagadas (AGENT_ENABLED=false): Hannah conversa y ejecuta comandos simples, sin tareas de varios pasos. Encender: hannah hands on"
   fi
   # "¿Sigue mirando?" tiene que poder contestarse acá: el contrato sense.v1 no emite latido, así
   # que cuatro horas de silencio y cuatro horas de ceguera se ven igual desde afuera. Lo que las
@@ -296,10 +314,11 @@ Uso: hannah [comando]
   stop [--keep-ollama] [--dry-run]   apaga todo y libera la VRAM
   doctor                             diagnostica el entorno y lo que falta
   uninstall [--yes] [--dry-run]      desinstala esta copia (Ollama, sus modelos y uv se quedan)
+  hands on|off                       instala y enciende las manos (agente + bun, bajo demanda), o las apaga
 USAGE
 }
 case "${1:-}" in
-  ""|stop|doctor|uninstall) ;;
+  ""|stop|doctor|uninstall|hands) ;;
   -h|--help|help) usage; exit 0 ;;
   *) echo "hannah: comando desconocido: $1" >&2; usage >&2; exit 2 ;;
 esac
@@ -534,6 +553,44 @@ uninstall_all() {
 }
 [ "${1:-}" = "uninstall" ] && { shift; uninstall_all "$@"; exit $?; }
 
+# Las manos, bajo demanda: el instalador ya no trae el agente (43 MB de repo + 870 MB de
+# dependencias + bun) porque va apagado por defecto. Aquí se instala cuando se quiere.
+set_env() {   # set_env CLAVE VALOR en el .env del backend (crea la linea si no existe)
+  if grep -q "^#\?[[:space:]]*$1=" "$BACK/.env" 2>/dev/null; then sed -i "s|^#\?[[:space:]]*$1=.*|$1=$2|" "$BACK/.env"
+  else printf '\n%s=%s\n' "$1" "$2" >>"$BACK/.env"; fi
+}
+hands_cmd() {
+  case "${1:-}" in
+    on)
+      if [ ! -d "$AGENT/.git" ]; then
+        AGENT="$ROOT/hannah-agent"
+        echo "Hannah: bajando el agente a $AGENT"
+        git clone -q https://github.com/Hannah-Motion-Lab/agent.git "$AGENT" || { echo "hannah: no pude clonar el agente" >&2; return 1; }
+      fi
+      export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
+      if ! has bun; then
+        echo "Hannah: instalando bun en ~/.bun (solo para tu usuario)"
+        local t; t="$(mktemp)"
+        curl -fsSL --proto '=https' --tlsv1.2 -o "$t" https://bun.sh/install && bash "$t" >/dev/null 2>&1; rm -f "$t"
+        has bun || { echo "hannah: bun no se instaló (https://bun.sh)" >&2; return 1; }
+      fi
+      echo "Hannah: dependencias del agente (bun install, un minuto)"
+      ( cd "$AGENT" && bun install >/dev/null 2>&1 ) || { echo "hannah: bun install falló en $AGENT" >&2; return 1; }
+      [ -f "$HOME/.config/hannah-agent/hannah-agent.jsonc" ] || ( cd "$AGENT" && scripts/install-profile.sh --openrouter >/dev/null 2>&1 ) || true
+      set_env AGENT_ENABLED true
+      echo "Manos encendidas (AGENT_ENABLED=true)."
+      echo "Falta la clave del proveedor (Anthropic u OpenRouter): ⚙ -> Manos en el overlay, o ANTHROPIC_API_KEY / OPENROUTER_API_KEY en $BACK/.env."
+      echo "Para que arranque el agente: hannah stop && hannah"
+      ;;
+    off)
+      set_env AGENT_ENABLED false
+      echo "Manos apagadas (AGENT_ENABLED=false). No se borra nada; 'hannah hands on' las vuelve a encender. Aplica al próximo arranque."
+      ;;
+    *) echo "Uso: hannah hands on|off" >&2; return 2 ;;
+  esac
+}
+[ "${1:-}" = "hands" ] && { shift; hands_cmd "$@"; exit $?; }
+
 # El candado evita dos cosas: pisar un `./hannah` que está levantando servicios, y que el
 # apagado se anide (al matar Electron, éste dispara SU propio `hannah stop`, que sin flags
 # ignoraría un --keep-ollama del apagado externo).
@@ -587,15 +644,11 @@ print(m['x'],m['y'],m['width'],m['height'])")"
 
 echo "[hannah] $(date) ROOT=$ROOT modo=$MODE" >>"$LOG"
 
-# Si se pidió la app pero no está instalada, no fallar: degradar al navegador y decirlo.
-APPIMAGE="${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}"
-if [ "$MODE" = app ] && [ ! -x "$DESK/node_modules/electron/dist/electron" ]; then
-  if [ -x "$APPIMAGE" ]; then
-    echo "[hannah] $DESK sin node_modules: uso el AppImage $APPIMAGE" >>"$LOG"; MODE=appimage
-  else
-    echo "[hannah] $DESK sin instalar (falta 'npm install'), uso el navegador" >>"$LOG"; MODE=browser
-  fi
-fi
+# Si se pidió la app pero no hay Electron de desarrollo, resolve_mode ya degradó a AppImage o navegador.
+case "$MODE" in
+  appimage) echo "[hannah] $DESK sin node_modules: uso el AppImage $APPIMAGE$(needs_vite && echo ' (HANNAH_DEV=1: frontend desde Vite)')" >>"$LOG" ;;
+  browser) [ "${HANNAH_MODE:-app}" = app ] && echo "[hannah] $DESK sin instalar y sin AppImage, uso el navegador" >>"$LOG" ;;
+esac
 
 # Instancia única.
 exec 9>"$ROOT/.hannah.lock"; flock -n 9 || { echo "[hannah] ya lanzándose" >>"$LOG"; exit 0; }
@@ -609,7 +662,7 @@ trap 'flock -u 9 2>/dev/null' EXIT   # salir por cualquier vía suelta el candad
 # abierta pero muda, y Super+H no volvía a levantar nada. Se comprueban los que de verdad
 # hacen falta para que hable: backend, Vite (y que hable HTTP, no HTTPS) y el TTS.
 EXIST="$(hannah_addr)"
-if [ "$MODE" != services ] && [ -n "$EXIST" ] && healthy 3001 && up 5173 && healthy 8002 && vite_http_ok && { ! agent_on || healthy 8006; }; then
+if [ "$MODE" != services ] && [ -n "$EXIST" ] && healthy 3001 && healthy 8002 && { ! needs_vite || { up 5173 && vite_http_ok; }; } && { ! agent_on || healthy 8006; }; then
   [ "$MODE" = browser ] && place_window "$EXIST"
   has hyprctl && hyprctl dispatch focuswindow "address:$EXIST" >/dev/null
   exit 0
@@ -680,7 +733,14 @@ if sense_on; then
   fi
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
-if up 5173; then
+if ! needs_vite; then
+  : # AppImage con su frontend empaquetado: Vite no hace falta (ni el repo del frontend)
+elif [ ! -d "$FRONT" ]; then
+  echo "hannah: en modo $MODE hace falta el repo del frontend y no está en $FRONT." >&2
+  echo "        git clone https://github.com/Hannah-Motion-Lab/frontend.git \"$FRONT\" && (cd \"$FRONT\" && npm install --legacy-peer-deps)" >&2
+  echo "        (el AppImage no lo necesita: sin HANNAH_DEV=1 y sin HANNAH_MODE, no pasa por aquí)" >&2
+  exit 1
+elif up 5173; then
   # Puerto ocupado: puede ser un Vite en HTTPS (npm run dev a mano) -> el overlay no carga.
   # (En modo services da igual: HTTPS es justo lo que quiere otro equipo de la red.)
   [ "$MODE" = services ] || vite_http_ok || {
@@ -723,12 +783,19 @@ fi
 # Si el frontend no llegó a levantar, abrir la ventana igual solo produce un overlay vacío
 # indistinguible de "la app no arranca". Mejor decirlo y salir.
 READY=""
-for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sleep 1; done
-warn_squatters $AUTO_PORTS
-if [ -z "$READY" ]; then
-  echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
-  echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en $FRONT?)." >&2
-  exit 1
+if needs_vite; then
+  for _ in $(seq 1 60); do curl -sf -o /dev/null "$URL" && { READY=1; break; }; sleep 1; done
+  warn_squatters $AUTO_PORTS
+  if [ -z "$READY" ]; then
+    echo "[hannah] el frontend no respondió en 60s ($URL)" >>"$LOG"
+    echo "Hannah: el frontend no levantó. Mirá $LOG (¿falló 'npm run dev' en $FRONT?)." >&2
+    exit 1
+  fi
+else
+  # sin Vite lo que tiene que estar es el backend (la app habla con :3001 por URL absoluta)
+  for _ in $(seq 1 90); do healthy 3001 && { READY=1; break; }; sleep 1; done
+  warn_squatters $AUTO_PORTS
+  [ -n "$READY" ] || { echo "Hannah: el backend no levantó. Mirá $LOG" >&2; exit 1; }
 fi
 
 # ── Navegador en modo-app ────────────────────────────────────────────────
@@ -764,11 +831,13 @@ if [ "$MODE" = app ]; then
   # shellcheck disable=SC2086
   ( cd "$DESK" && HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid npm start -- ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
 elif [ "$MODE" = appimage ]; then
-  # El AppImage del instalador (sin node_modules en hannah-desktop). Usa el Vite que acaba de
-  # levantar el launcher igual que la app de desarrollo; se relanza solo con sus flags.
+  # El AppImage del instalador (sin node_modules en hannah-desktop): frontend empaquetado; se
+  # relanza solo con sus flags.
   echo "[hannah] abriendo el AppImage" >>"$LOG"
   # shellcheck disable=SC2086
-  ( HANNAH_DEV=1 HANNAH_STOP_ON_EXIT=1 setsid "$APPIMAGE" ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
+  # Sin HANNAH_DEV: frontend empaquetado. Con HANNAH_DEV=1 en el entorno, el Vite de arriba.
+  # shellcheck disable=SC2086
+  ( env ${HANNAH_DEV:+HANNAH_DEV=1} HANNAH_STOP_ON_EXIT=1 setsid "$APPIMAGE" ${HANNAH_ELECTRON_FLAGS:-} >>"$LOG" 2>&1 & ) 9>&-
 else
   open_browser
   # ── Colocar la ventana encima ─────────────────────────────────────────────
