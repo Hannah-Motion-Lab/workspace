@@ -3,6 +3,7 @@
 #   hannah            bring up Ollama + voice/listening/gesture sidecars + backend (+ agent) and open the overlay
 #   hannah stop       shut it all down (add --keep-ollama to leave the model server running)
 #   hannah doctor     what is running and what is missing
+#   hannah uninstall  remove this copy, the app and its data (Ollama and its models stay)
 # Everything runs in the user's session, no admin. Log: $ROOT/.hannah-launch.log
 set -u
 
@@ -109,10 +110,49 @@ stop_all() {
   if [ -z "$keep" ]; then pkill -u "$(id -u)" -x ollama 2>/dev/null && echo "  ollama ✓"; else echo "  ollama kept"; fi
 }
 
+usage() { sed -n '2,7p' "$self" | sed 's/^# \{0,1\}//'; }
+# follow a symlink (macOS has no `readlink -f`)
+resolve() { local t="$1"; while [ -L "$t" ]; do local n; n="$(readlink "$t")"; case "$n" in /*) t="$n" ;; *) t="$(dirname "$t")/$n" ;; esac; done; printf '%s' "$t"; }
+# Uninstall: what the installer created and nothing else. Ollama and its models are the
+# user's (used outside Hannah too), uv and bun are shared tools: they stay.
+uninstall_all() {
+  local yes="" dry="" a b
+  for a in "$@"; do [ "$a" = "--yes" ] && yes=1; [ "$a" = "--dry-run" ] && dry=1; done
+  local link="$HOME/.local/bin/hannah" app_data="$HOME/Library/Application Support/hannah-desktop" agent_cfg="$HOME/.config/hannah-agent"
+  local link_ours="" tools=""
+  [ -L "$link" ] && case "$(resolve "$link")" in "$ROOT"/*) link_ours=1 ;; esac
+  # node/npm/npx symlinks the installer pointed at the node it bundled under $ROOT/.tools
+  for b in node npm npx; do [ -L "$HOME/.local/bin/$b" ] && case "$(readlink "$HOME/.local/bin/$b")" in "$ROOT"/.tools/*) tools="$tools $HOME/.local/bin/$b" ;; esac; done
+  echo "Hannah, uninstall. This removes:"
+  echo "  $ROOT"
+  echo "      (repos, Python envs, weights, and data/ with your settings, keys and memory)"
+  [ -d "$APP" ] && echo "  $APP"
+  [ -n "$link_ours" ] && echo "  $link (symlink)"
+  [ -n "$tools" ] && echo "  $tools (symlinks to the node the installer bundled)"
+  [ -d "$app_data" ] && echo "  $app_data (window position)"
+  [ -d "$agent_cfg" ] && echo "  $agent_cfg"
+  echo "Kept: Ollama and its models, uv, bun."
+  [ -n "$dry" ] && { echo "(dry run: nothing removed)"; return 0; }
+  if [ -z "$yes" ]; then
+    printf 'Type "yes" to remove all of that: '
+    read -r a </dev/tty || a=""
+    [ "$a" = "yes" ] || { echo "cancelled, nothing touched"; return 1; }
+  fi
+  stop_all --keep-ollama >/dev/null 2>&1
+  [ -n "$link_ours" ] && rm -f "$link"
+  # shellcheck disable=SC2086
+  [ -n "$tools" ] && rm -f $tools
+  rm -rf "$APP" "$app_data" "$agent_cfg" "$ROOT"
+  echo "Hannah uninstalled. To come back: curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash"
+}
+
 case "${1:-}" in
+  "") ;;
   doctor) doctor; exit 0 ;;
   stop) shift; stop_all "$@"; exit 0 ;;
-  -h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  uninstall) shift; uninstall_all "$@"; exit $? ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) echo "hannah: unknown command: $1" >&2; usage >&2; exit 2 ;;
 esac
 
 [ -f "$BACK/.env" ] || { echo "hannah: $BACK/.env is missing — run the installer first"; exit 1; }

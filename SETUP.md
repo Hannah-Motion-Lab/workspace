@@ -416,7 +416,7 @@ provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the 
 Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
 voice and listening sidecars on the CPU, the gesture model (`MOTION_DEVICE=auto`: CUDA if there
 is one, else Apple's MPS, else the CPU — slower but never skipped), the backend and the overlay
-app; `hannah stop` and `hannah doctor` work as on Linux. The Linux `hannah` launcher itself is
+app; `hannah stop`, `hannah doctor` and `hannah uninstall` work as on Linux. The Linux `hannah` launcher itself is
 Linux-only (it leans on `ss`, `/proc`, `ip` and the X11/Hyprland adapters).
 
 If you would rather do it by hand, this is what the installers do — the **overlay app** is built

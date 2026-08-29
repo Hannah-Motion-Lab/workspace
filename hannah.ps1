@@ -4,9 +4,10 @@
 #   hannah stop       shut it all down (add -KeepOllama to leave the model server running)
 #   hannah doctor     what is running and what is missing
 # Everything runs in your user session, no admin. Logs: <root>\.hannah-logs\
-param([string]$Command = 'up', [switch]$KeepOllama)
+param([string]$Command = 'up', [switch]$KeepOllama, [switch]$Yes, [switch]$DryRun)
 $ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot
+$Tools = Join-Path $Root '.tools'
 $Back = Join-Path $Root 'hannah-backend'
 $Agent = Join-Path $Root 'hannah-agent'
 $Lab = Join-Path $Root 'hannah-motion-lab'
@@ -115,6 +116,42 @@ switch ($Command) {
     Write-Host '  backend, sidecars, agent ok'
     if (-not $KeepOllama) { Get-Process -Name ollama -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Write-Host '  ollama ok' } else { Write-Host '  ollama kept' }
     exit 0
+  }
+  'uninstall' {
+    # What the installer created and nothing else. Ollama and its models are the user's (used
+    # outside Hannah too); uv, bun and ~\.local\bin are shared tools: they stay.
+    $appDir = Split-Path $App
+    $unins = Join-Path $appDir 'Uninstall Hannah.exe'
+    $appData = Join-Path $env:APPDATA 'hannah-desktop'
+    $agentCfg = Join-Path $env:USERPROFILE '.config\hannah-agent'
+    Write-Host 'Hannah, uninstall. This removes:'
+    Write-Host "  $Root"
+    Write-Host '      (repos, Python envs, weights, and data\ with your settings, keys and memory)'
+    if (Test-Path $App) { Write-Host "  $appDir (the app)" }
+    if (Test-Path $appData) { Write-Host "  $appData (window position)" }
+    if (Test-Path $agentCfg) { Write-Host "  $agentCfg" }
+    Write-Host "  the PATH entries the installer added ($Root and $Tools\*)"
+    Write-Host 'Kept: Ollama and its models, uv, bun, ~\.local\bin.'
+    if ($DryRun) { Write-Host '(dry run: nothing removed)'; exit 0 }
+    if (-not $Yes) { $a = Read-Host 'Type "yes" to remove all of that'; if ($a -ne 'yes') { Write-Host 'cancelled, nothing touched'; exit 1 } }
+    Get-Process -Name Hannah -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $App } | Stop-Process -Force -ErrorAction SilentlyContinue
+    OwnProcs | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep 1
+    if (Test-Path $unins) { Start-Process -Wait -FilePath $unins -ArgumentList '/S' -ErrorAction SilentlyContinue }
+    if (Test-Path $appDir) { Remove-Item -Recurse -Force $appDir -ErrorAction SilentlyContinue }
+    foreach ($d in @($appData, $agentCfg)) { if (Test-Path $d) { Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue } }
+    $keep = ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') | Where-Object { $_ -and ($_ -ne $Root) -and (-not $_.StartsWith($Tools, 'OrdinalIgnoreCase')) }
+    [Environment]::SetEnvironmentVariable('Path', ($keep -join ';'), 'User')
+    # this script lives inside $Root: the folder goes right after we exit
+    Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList "/c timeout /t 3 /nobreak >nul & rmdir /s /q `"$Root`""
+    Write-Host 'Hannah uninstalled (the folder disappears in a few seconds). To come back: irm https://hannah-motion-lab.github.io/site/install.ps1 | iex'
+    exit 0
+  }
+  'up' { }
+  default {
+    Write-Host "hannah: unknown command: $Command"
+    Write-Host 'Usage: hannah [stop [-KeepOllama] | doctor | uninstall [-Yes] [-DryRun]]'
+    exit 2
   }
 }
 

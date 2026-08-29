@@ -82,6 +82,7 @@ cd ../hannah-frontend && npm install --legacy-peer-deps   # careful: without the
 ./hannah                       # opens the Electron app; if it's already open, it focuses it
 ./hannah stop                  # shuts EVERYTHING down and frees the VRAM (Ollama models included)
 ./hannah doctor                # diagnoses whether the overlay will float here, and what's missing
+./hannah uninstall             # removes this copy, the app and its data (Ollama and its models stay); --dry-run lists first
 HANNAH_MODE=browser ./hannah   # lightweight alternative: the frontend in a browser
 HANNAH_MODE=services ./hannah  # everything up, NO window: prints https://<this-ip>:5173/?token=… for another device on the LAN
 

@@ -286,6 +286,20 @@ doctor() {
   echo
   echo "  Documentación: SETUP.md"
 }
+usage() {
+  cat <<'USAGE'
+Uso: hannah [comando]
+  (nada)                             levanta lo que falte y abre el overlay
+  stop [--keep-ollama] [--dry-run]   apaga todo y libera la VRAM
+  doctor                             diagnostica el entorno y lo que falta
+  uninstall [--yes] [--dry-run]      desinstala esta copia (Ollama, sus modelos y uv se quedan)
+USAGE
+}
+case "${1:-}" in
+  ""|stop|doctor|uninstall) ;;
+  -h|--help|help) usage; exit 0 ;;
+  *) echo "hannah: comando desconocido: $1" >&2; usage >&2; exit 2 ;;
+esac
 [ "${1:-}" = "doctor" ] && { doctor; exit 0; }
 
 # ── `hannah stop` — apagar TODO lo del proyecto ───────────────────────────────
@@ -485,6 +499,38 @@ stop_all() {
     has nvidia-smi && echo "  VRAM en uso: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
   fi
 }
+# Desinstalar: lo que creó el instalador y nada más. Ollama y sus modelos son del usuario
+# (los usa fuera de Hannah), uv y node son herramientas compartidas: se quedan.
+uninstall_all() {
+  local yes="" dry="" a
+  for a in "$@"; do [ "$a" = "--yes" ] && yes=1; [ "$a" = "--dry-run" ] && dry=1; done
+  local appimage="${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}" link="$HOME/.local/bin/hannah"
+  local app_data="$HOME/.config/hannah-desktop" agent_cfg="$HOME/.config/hannah-agent"
+  local link_ours=""
+  [ -L "$link" ] && case "$(readlink -f "$link" 2>/dev/null)" in "$ROOT"/*) link_ours=1 ;; esac
+  echo "Hannah — desinstalar. Se borra:"
+  echo "  $ROOT"
+  echo "      (repos, entornos Python, pesos, y data/ con tus ajustes, claves y memoria)"
+  [ -e "$appimage" ] && echo "  $appimage"
+  [ -n "$link_ours" ] && echo "  $link (enlace)"
+  [ -d "$app_data" ] && echo "  $app_data (posición de la ventana)"
+  [ -d "$agent_cfg" ] && echo "  $agent_cfg"
+  echo "Se queda: Ollama y sus modelos, uv, node."
+  [ -n "$dry" ] && { echo "(simulacro: no se borra nada)"; return 0; }
+  if [ -z "$yes" ]; then
+    printf 'Escribe "si" para borrar todo eso: '
+    read -r a </dev/tty || a=""
+    [ "$a" = "si" ] || { echo "cancelado, no se tocó nada"; return 1; }
+  fi
+  stop_all --keep-ollama >/dev/null 2>&1
+  [ -n "$link_ours" ] && rm -f "$link"
+  rm -f "$appimage"
+  rm -rf "$app_data" "$agent_cfg"
+  rm -rf "$ROOT"
+  echo "Hannah desinstalada. Para volver: curl -fsSL https://hannah-motion-lab.github.io/site/install.sh | bash"
+}
+[ "${1:-}" = "uninstall" ] && { shift; uninstall_all "$@"; exit $?; }
+
 # El candado evita dos cosas: pisar un `./hannah` que está levantando servicios, y que el
 # apagado se anide (al matar Electron, éste dispara SU propio `hannah stop`, que sin flags
 # ignoraría un --keep-ollama del apagado externo).
