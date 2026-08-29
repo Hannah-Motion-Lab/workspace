@@ -4,6 +4,7 @@
 #   hannah stop       shut it all down (add --keep-ollama to leave the model server running)
 #   hannah doctor     what is running and what is missing
 #   hannah uninstall  remove this copy, the app and its data (Ollama and its models stay)
+#   hannah hands on   install and enable the hands (the agent + bun, on demand); `off` disables
 # Everything runs in the user's session, no admin. Log: $ROOT/.hannah-launch.log
 set -u
 
@@ -106,7 +107,7 @@ err = h.get("warm_up_error")
 if err: print("BROKEN on %s: %s (the model loaded, but every /motion answers 500)" % (h.get("device"), err))
 elif not h.get("ready", True): print("warming up on %s (first start downloads the text encoder; a minute or two)" % h.get("device"))
 else: print("on %s" % h.get("device"))' 2>/dev/null || echo "not running")"
-  agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (AGENT_ENABLED=false)"
+  agent_on && echo "  hands      : AGENT_ENABLED=true · key $([ -n "$(agent_key)" ] && echo ✓ || echo ✗)" || echo "  hands      : off (enable: hannah hands on)"
   if sense_on; then echo "  watches    : $(watch_counts || echo ':8007 is not answering (missing sidecar/sense/.venv? re-run the installer)')"; else echo "  watches    : off (SENSE_ENABLED=false)"; fi
 }
 
@@ -157,11 +158,48 @@ uninstall_all() {
   echo "Hannah uninstalled. To come back: curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash"
 }
 
+set_env() {   # set_env KEY VALUE in the backend .env (adds the line if missing)
+  if grep -q "^#\{0,1\}[[:space:]]*$1=" "$BACK/.env" 2>/dev/null; then sed -i '' "s|^#\{0,1\}[[:space:]]*$1=.*|$1=$2|" "$BACK/.env"
+  else printf '\n%s=%s\n' "$1" "$2" >>"$BACK/.env"; fi
+}
+# The hands, on demand: the installer no longer brings the agent (43 MB of repo, 870 MB of
+# dependencies and bun) because it is off by default.
+hands_cmd() {
+  case "${1:-}" in
+    on)
+      if [ ! -d "$AGENT/.git" ]; then
+        echo "Hannah: downloading the agent to $AGENT"
+        git clone -q https://github.com/Hannah-Motion-Lab/agent.git "$AGENT" || { echo "hannah: could not clone the agent" >&2; return 1; }
+      fi
+      export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
+      if ! has bun; then
+        echo "Hannah: installing bun in ~/.bun (your user only)"
+        local t; t="$(mktemp)"
+        curl -fsSL --proto '=https' --tlsv1.2 -o "$t" https://bun.sh/install && bash "$t" >/dev/null 2>&1; rm -f "$t"
+        has bun || { echo "hannah: bun did not install (https://bun.sh)" >&2; return 1; }
+      fi
+      echo "Hannah: agent dependencies (bun install, about a minute)"
+      ( cd "$AGENT" && bun install >/dev/null 2>&1 ) || { echo "hannah: bun install failed in $AGENT" >&2; return 1; }
+      [ -f "$HOME/.config/hannah-agent/hannah-agent.jsonc" ] || ( cd "$AGENT" && scripts/install-profile.sh --openrouter >/dev/null 2>&1 ) || true
+      set_env AGENT_ENABLED true
+      echo "Hands on (AGENT_ENABLED=true)."
+      echo "Missing: the provider key (Anthropic or OpenRouter): the overlay's settings -> Hands, or ANTHROPIC_API_KEY / OPENROUTER_API_KEY in $BACK/.env."
+      echo "Restart so the agent starts: hannah stop && hannah"
+      ;;
+    off)
+      set_env AGENT_ENABLED false
+      echo "Hands off (AGENT_ENABLED=false). Nothing is removed; 'hannah hands on' enables them again. Applies on the next start."
+      ;;
+    *) echo "Usage: hannah hands on|off" >&2; return 2 ;;
+  esac
+}
+
 case "${1:-}" in
   "") ;;
   doctor) doctor; exit 0 ;;
   stop) shift; stop_all "$@"; exit 0 ;;
   uninstall) shift; uninstall_all "$@"; exit $? ;;
+  hands) shift; hands_cmd "$@"; exit $? ;;
   -h|--help|help) usage; exit 0 ;;
   *) echo "hannah: unknown command: $1" >&2; usage >&2; exit 2 ;;
 esac

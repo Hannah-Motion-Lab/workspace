@@ -24,6 +24,12 @@ motion `/health` returns `ready` (false while warming up: minutes on CPU, normal
 | macOS | `.hannah-launch.log` | same file | none by default |
 | Windows | `.hannah-launch.log` | `.hannah-logs\<svc>.out.log` / `.err.log` | `.hannah-logs\app.log` |
 
+The installers print one line per step; everything each step ran (npm, uv, git) is in
+`.hannah-install.log` in the install folder, and a failed step prints its last 25 lines.
+What a default install does NOT contain, on purpose: the agent (`hannah hands on` brings it),
+YOLO (`sidecar/requirements-vision-yolo.txt`), and on Linux the frontend repo + Vite (the AppImage
+carries the frontend; `HANNAH_DEV=1 hannah` needs the repo cloned next to the launcher).
+
 `hannah doctor` prints what is up, what is missing and the last lines of the error log of any
 service that is down. Start there, always.
 

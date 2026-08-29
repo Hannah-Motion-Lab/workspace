@@ -4,7 +4,7 @@
 #   hannah stop       shut it all down (add -KeepOllama to leave the model server running)
 #   hannah doctor     what is running and what is missing
 # Everything runs in your user session, no admin. Logs: <root>\.hannah-logs\
-param([string]$Command = 'up', [switch]$KeepOllama, [switch]$Yes, [switch]$DryRun)
+param([string]$Command = 'up', [string]$Arg = '', [switch]$KeepOllama, [switch]$Yes, [switch]$DryRun)
 $ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot
 $Tools = Join-Path $Root '.tools'
@@ -104,7 +104,7 @@ switch ($Command) {
         Get-Content $errLog -Tail 8 | ForEach-Object { Write-Host "      $_" }
       }
     }
-    Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true - key $(if (AgentKey) { 'ok' } else { 'x' })" } else { 'off (AGENT_ENABLED=false)' })"
+    Write-Host "  hands      : $(if (AgentOn) { "AGENT_ENABLED=true - key $(if (AgentKey) { 'ok' } else { 'x' })" } else { 'off (enable: hannah hands on)' })"
     Write-Host "  watches    : $(if (SenseOn) { $c = WatchCounts; if ($c) { $c } else { ':8007 is not answering (missing sidecar\sense\.venv? re-run the installer)' } } else { 'off (SENSE_ENABLED=false)' })"
     exit 0
   }
@@ -147,10 +147,46 @@ switch ($Command) {
     Write-Host 'Hannah uninstalled (the folder disappears in a few seconds). To come back: irm https://hannah-motion-lab.github.io/site/install.ps1 | iex'
     exit 0
   }
+  'hands' {
+    # The hands, on demand: the installer no longer brings the agent (repo, 870 MB of
+    # dependencies and bun) because it is off by default.
+    function Set-EnvKey($key, $value) {
+      $f = Join-Path $Back '.env'
+      $text = Get-Content $f -Raw
+      if ($text -match "(?m)^#?\s*$key=") { $text = $text -replace "(?m)^#?\s*$key=.*$", "$key=$value" } else { $text = $text.TrimEnd() + "`r`n$key=$value`r`n" }
+      Set-Content $f $text -NoNewline
+    }
+    switch ($Arg) {
+      'on' {
+        if (-not (Test-Path (Join-Path $Agent '.git'))) {
+          Write-Host "Hannah: downloading the agent to $Agent"
+          git clone -q https://github.com/Hannah-Motion-Lab/agent.git $Agent; if ($LASTEXITCODE) { Write-Host 'hannah: could not clone the agent'; exit 1 }
+        }
+        if (-not (Has bun)) {
+          Write-Host 'Hannah: installing bun (your user only)'
+          $t = Join-Path ([IO.Path]::GetTempPath()) 'bun-install.ps1'
+          Invoke-WebRequest 'https://bun.sh/install.ps1' -OutFile $t -UseBasicParsing
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $t | Out-Null
+          $env:Path = "$env:USERPROFILE\.bun\bin;$env:Path"
+          if (-not (Has bun)) { Write-Host 'hannah: bun did not install (https://bun.sh)'; exit 1 }
+        }
+        Write-Host 'Hannah: agent dependencies (bun install, about a minute)'
+        Push-Location $Agent; bun install 2>&1 | Out-Null; $rc = $LASTEXITCODE; Pop-Location
+        if ($rc) { Write-Host "hannah: bun install failed in $Agent"; exit 1 }
+        Set-EnvKey 'AGENT_ENABLED' 'true'
+        Write-Host 'Hands on (AGENT_ENABLED=true).'
+        Write-Host "Missing: the provider key (Anthropic or OpenRouter): the overlay's settings -> Hands, or ANTHROPIC_API_KEY / OPENROUTER_API_KEY in $Back\.env."
+        Write-Host 'Restart so the agent starts: hannah stop, then hannah'
+        exit 0
+      }
+      'off' { Set-EnvKey 'AGENT_ENABLED' 'false'; Write-Host "Hands off (AGENT_ENABLED=false). Nothing is removed; 'hannah hands on' enables them again. Applies on the next start."; exit 0 }
+      default { Write-Host 'Usage: hannah hands on|off'; exit 2 }
+    }
+  }
   'up' { }
   default {
     Write-Host "hannah: unknown command: $Command"
-    Write-Host 'Usage: hannah [stop [-KeepOllama] | doctor | uninstall [-Yes] [-DryRun]]'
+    Write-Host 'Usage: hannah [stop [-KeepOllama] | doctor | uninstall [-Yes] [-DryRun] | hands on|off]'
     exit 2
   }
 }

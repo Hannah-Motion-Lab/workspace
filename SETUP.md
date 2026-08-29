@@ -416,7 +416,7 @@ provider). It can be changed later in ⚙ → Brain. `GET /api/v1/brain` is the 
 Afterwards `hannah` (launchers `hannah-mac` / `hannah.ps1` in this repo) brings up Ollama, the
 voice and listening sidecars on the CPU, the gesture model (`MOTION_DEVICE=auto`: CUDA if there
 is one, else Apple's MPS, else the CPU — slower but never skipped), the backend and the overlay
-app; `hannah stop`, `hannah doctor` and `hannah uninstall` work as on Linux. The Linux `hannah` launcher itself is
+app; `hannah stop`, `hannah doctor`, `hannah uninstall` and `hannah hands on` work as on Linux. The Linux `hannah` launcher itself is
 Linux-only (it leans on `ss`, `/proc`, `ip` and the X11/Hyprland adapters).
 
 If you would rather do it by hand, this is what the installers do — the **overlay app** is built
@@ -429,6 +429,9 @@ the rest of the stack goes in your user folder:
 - **Ollama**: the desktop app. On macOS drag it to `~/Applications` (not `/Applications`) and
   decline the "install CLI" step (that is the one prompt that wants admin); the binary is at
   `~/Applications/Ollama.app/Contents/Resources/ollama`. Then `ollama pull qwen2.5:7b`.
+- **Vision with YOLO is opt-in** (`VISION_PROVIDER=yolo`): `ultralytics` pulls torch, the CUDA libs,
+  opencv and friends (about 5 GB), so it lives in `sidecar/requirements-vision-yolo.txt` and no
+  installer brings it. The default provider (a VLM through Ollama) needs nothing.
 - **Sidecars on CPU**: `sidecar/requirements.txt` pins `onnxruntime-gpu`, which has no macOS
   wheel — swap it for `onnxruntime` (`sed 's/onnxruntime-gpu==.*/onnxruntime/' requirements.txt > req-cpu.txt`)
   and run the TTS with `TTS_DEVICE=cpu`. Whisper runs on CPU as is. Expect ~1–2 s per sentence
