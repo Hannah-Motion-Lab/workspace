@@ -93,7 +93,10 @@ up() { ss -ltn 2>/dev/null | grep -q ":$1 "; }
 # ¿Hay ALGO nuestro respondiendo ahí? "Puerto ocupado" no es "servicio sano": otra app en 8002
 # dejaba a Hannah muda con el doctor en ✓. Cada servicio tiene su ruta de salud.
 health_path() { case "$1" in 3001) echo /api/v1/health ;; 8006) echo /hannah/v0/health ;; 11434) echo /api/tags ;; 5173) echo / ;; *) echo /health ;; esac; }
-healthy() { curl -sf -o /dev/null -m 2 "http://127.0.0.1:$1$(health_path "$1")" 2>/dev/null || curl -skf -o /dev/null -m 2 "https://127.0.0.1:$1$(health_path "$1")" 2>/dev/null; }
+# `localhost`, no 127.0.0.1: Vite escucha en `localhost`, que en muchas maquinas resuelve solo a
+# IPv6 ([::1]), y sondeando 127.0.0.1 el doctor lo daba por "puerto ocupado por otra cosa".
+# curl prueba las dos familias.
+healthy() { curl -sf -o /dev/null -m 2 "http://localhost:$1$(health_path "$1")" 2>/dev/null || curl -skf -o /dev/null -m 2 "https://localhost:$1$(health_path "$1")" 2>/dev/null; }
 # Puertos ocupados por algo que NO responde como el servicio esperado: se avisa en vez de callar.
 warn_squatters() {
   local p
