@@ -420,6 +420,21 @@ stop_all() {
     argv0_in_project "$pid" || continue
     kill_tree "$pid" && { echo "  ventana (pid $pid)"; n=$((n+1)); }
   done
+  # 1b) el AppImage del instalador (MODE=appimage): su ejecutable es el propio AppImage (el
+  #     runtime) o el binario dentro del montaje FUSE /tmp/.mount_Hannah*/, ninguno dentro del
+  #     repo, asi que el paso 1 no lo ve. Se ancla al EJECUTABLE real (/proc/pid/exe), no a la
+  #     linea de comandos, para no tocar un editor o un shell que solo mencionen la ruta.
+  local ai exe
+  ai="$(readlink -f "${HANNAH_APPIMAGE:-$HOME/.local/bin/Hannah.AppImage}" 2>/dev/null)"
+  for pid in $(pgrep -u "$(id -u)" -f "Hannah.AppImage|/\.mount_Hannah" 2>/dev/null); do
+    exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null)"
+    case "$exe" in
+      "$ai"|/tmp/.mount_Hannah*/hannah-desktop) ;;
+      *) continue ;;
+    esac
+    kill -0 "$pid" 2>/dev/null || continue     # pudo caer como descendiente del anterior
+    kill_tree "$pid" && { echo "  ventana AppImage (pid $pid)"; n=$((n+1)); }
+  done
   # 2) servicios, por el puerto en el que escuchan
   for s in $SERVICES; do
     pid="$(port_pid "${s%%:*}")"
