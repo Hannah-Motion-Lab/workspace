@@ -12,6 +12,7 @@ hannah-site/
 .hannah-launch.log
 .hannah.lock
 # tooling local
+.tools/
 CLAUDE.md
 .claude/
 memory/
