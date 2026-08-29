@@ -579,7 +579,9 @@ has ollama && ! pgrep -x ollama >/dev/null 2>&1 && { nohup ollama serve >>"$LOG"
 up 8002 || ( cd "$BACK" && nohup npm run sidecar:tts >>"$LOG" 2>&1 & ) 9>&-
 up 8001 || ( cd "$BACK" && nohup npm run sidecar:asr >>"$LOG" 2>&1 & ) 9>&-
 # gestos: CUDA si hay, si no CPU (MOTION_DEVICE=auto); PYTHONPATH por si el venv no tiene el paquete editable
-up 8005 || ( cd "$LAB"  && MOTION_DEVICE="${MOTION_DEVICE:-auto}" PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
+# `exec`: sin el, bash deja un envoltorio vivo (por las asignaciones delante del comando no hace
+# el exec implicito) que al morir el hijo en `hannah stop` imprime "Terminated ..." en la terminal.
+up 8005 || ( cd "$LAB"  && MOTION_DEVICE="${MOTION_DEVICE:-auto}" PYTHONPATH="$LAB/src" exec nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & ) 9>&-
 # Las "manos" (hannah-agent, :8006): SOLO si AGENT_ENABLED=true en el .env del backend. Se
 # arranca ANTES que el backend para que su health-check inicial lo encuentre vivo.
 if agent_on; then
@@ -622,7 +624,7 @@ if sense_on; then
                 SENSE_MIN_PERIOD_MS="$(envval SENSE_MIN_PERIOD_MS)" \
                 SENSE_DEBOUNCE_N="$(envval SENSE_DEBOUNCE_N)" \
                 SENSE_BLIND_MS="$(envval SENSE_BLIND_MS)" \
-      && nohup npm run sidecar:sense >>"$LOG" 2>&1 & ) 9>&-
+      && exec nohup npm run sidecar:sense >>"$LOG" 2>&1 & ) 9>&-
   fi
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & ) 9>&-
