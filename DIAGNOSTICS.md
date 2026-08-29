@@ -114,7 +114,10 @@ or any admin install.
 npm 12 blocks package install scripts unless approved (`npm install-scripts ls` shows them as
 blocked), so `better-sqlite3`'s prebuild download and the backend's `postinstall` never run and
 13 of the test suites fail to load. `npm install-scripts approve better-sqlite3 unrs-resolver`
-then `npm rebuild better-sqlite3`. The installers ship Node 20/22 (npm 10) and are not affected.
+then `npm rebuild better-sqlite3` (compiles from source, minutes). The installers avoid this: they
+only accept a system Node 20/22/24 and otherwise download a private Node 22 into `.tools/node`
+(the launchers put it first on their PATH). Seen for real on Arch with Node 26 + npm 12: backend
+dead at start with `Could not locate the bindings file`.
 
 **macOS: deaf and blind with no error, or every terminal session dies with `posix_spawnp failed`.**
 See `MACOS-FIXES.md`: an unsigned `Hannah.app` never gets the mic/camera prompt (releases from

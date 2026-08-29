@@ -12,6 +12,9 @@ set -u
 # Raíz del proyecto = carpeta de este script (portable).
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"   # catalog_check relee este archivo
 ROOT="$(cd "$(dirname "$SELF")" && pwd)"
+# Node privado del instalador (cuando el del sistema no es un LTS con binarios precompilados):
+# primero en el PATH, el del sistema no se toca.
+[ -x "$ROOT/.tools/node/bin/node" ] && export PATH="$ROOT/.tools/node/bin:$PATH"
 # Cada repo hermano tiene DOS nombres y puede estar en DOS sitios, y hay que probar los cuatro:
 #   - nombre: el instalador (site/install.sh) clona hannah-backend/, hannah-frontend/…; un
 #     checkout de desarrollo conserva los de upstream (backend/, frontend/, motion-model/…).
