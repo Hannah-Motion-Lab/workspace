@@ -101,6 +101,15 @@ are ASCII only, keep them so), native stderr is fatal under `$ErrorActionPrefere
 per-user install lands in `%LOCALAPPDATA%\Programs\Hannah` (found via the Uninstall registry key),
 downloaded scripts need `Unblock-File`, PATH changes need a new terminal.
 
+**Backend fails with `ERR_MODULE_NOT_FOUND` (express or anything else) right after installing.**
+`node_modules` is partial: a previous `npm install` died halfway and the installer used to skip
+the install when the directory existed (installers now always run `npm install`; it is a fast
+no-op when complete). Known way to get there: `better-sqlite3` 13.x ships no prebuilt binaries,
+so it compiles with node-gyp, which on Windows demands Visual Studio; the backend pins
+`better-sqlite3` to `^12.11.1`, whose `prebuild-install` downloads a binary for the exact Node
+ABI. Do not bump it to 13.x until it publishes prebuilds again, and never require Visual Studio
+or any admin install.
+
 ## Quick checks without the UI
 
 ```bash
