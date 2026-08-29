@@ -197,3 +197,5 @@ Run **`./hannah doctor`**: it tells you whether your environment supports the ov
   The assets are a different story and are NOT in git: SMPL-X (non-commercial research license)
   and Mixamo clips (Adobe) are downloaded by each user under their own terms; the Kokoro voice
   model and the Whisper/Ollama models come from their upstream releases.
+
+Something failing? `DIAGNOSTICS.md` maps each symptom to the log to read and the causes already seen.
