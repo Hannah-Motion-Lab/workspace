@@ -110,6 +110,18 @@ so it compiles with node-gyp, which on Windows demands Visual Studio; the backen
 ABI. Do not bump it to 13.x until it publishes prebuilds again, and never require Visual Studio
 or any admin install.
 
+**Native modules missing after `npm install` (`better_sqlite3.node`, node-pty) with npm 12+.**
+npm 12 blocks package install scripts unless approved (`npm install-scripts ls` shows them as
+blocked), so `better-sqlite3`'s prebuild download and the backend's `postinstall` never run and
+13 of the test suites fail to load. `npm install-scripts approve better-sqlite3 unrs-resolver`
+then `npm rebuild better-sqlite3`. The installers ship Node 20/22 (npm 10) and are not affected.
+
+**macOS: deaf and blind with no error, or every terminal session dies with `posix_spawnp failed`.**
+See `MACOS-FIXES.md`: an unsigned `Hannah.app` never gets the mic/camera prompt (releases from
+1.0.15 are ad-hoc signed with the entitlements, and `install-mac.sh` re-signs older ones;
+`hannah doctor` has a `microphone :` line), and node-pty's `spawn-helper` needs `+x` (backend
+`postinstall`, installer, and the doctor's `terminal :` line).
+
 ## Quick checks without the UI
 
 ```bash

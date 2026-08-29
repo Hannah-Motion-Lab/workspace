@@ -439,14 +439,14 @@ the rest of the stack goes in your user folder:
 - **Run it** (four terminals from `hannah-backend`): `TTS_DEVICE=cpu npm run sidecar:tts`,
   `npm run sidecar:asr`, `npm run dev`; then `HANNAH_HTTP=1 npm run dev` in `hannah-frontend`
   and open the overlay app (or `HANNAH_DEV=1 npm start` in `hannah-desktop` to use the dev server).
-- **Unsigned builds — quarantine is only half of it.** macOS quarantines the download and says the
+- **Unsigned builds - quarantine is only half of it.** macOS quarantines the download and says the
   app "can't be opened": `xattr -dr com.apple.quarantine ~/Applications/Hannah.app` fixes that
   without admin (you own the file). Windows SmartScreen: "More info → Run anyway". An app you build
   yourself (`npm run build:mac` / `build:win` in `hannah-desktop`) carries no quarantine at all.
 
   **On macOS, clearing the quarantine still does not get you the microphone or the camera.** The
-  published DMGs ship with *no code signature at all* — `codesign -dv ~/Applications/Hannah.app`
-  answers `code object is not signed at all` — and TCC, the privacy layer, keys mic access to the
+  published DMGs ship with *no code signature at all* - `codesign -dv ~/Applications/Hannah.app`
+  answers `code object is not signed at all` - and TCC, the privacy layer, keys mic access to the
   entitlement `com.apple.security.device.audio-input`. Entitlements live *inside* the signature, so
   an unsigned bundle cannot carry one, and TCC refuses to even show the prompt:
 
@@ -459,12 +459,12 @@ the rest of the stack goes in your user folder:
 
   The camera is denied the same way. **And the failure is completely silent**: no permission prompt,
   no entry to switch on under System Settings → Privacy & Security → Microphone, and no error in the
-  overlay — the frontend's `Sin microfono:` banner only fires when `getUserMedia` *throws*, and here
+  overlay - the frontend's `Sin microfono:` banner only fires when `getUserMedia` *throws*, and here
   it never does. Hannah simply never hears you. `NSMicrophoneUsageDescription` and
   `NSCameraUsageDescription` are already in the `Info.plist` and are **not** the problem: a usage
   string is only the text of a prompt that TCC has decided not to show.
 
-  The fix is to ad-hoc sign the bundle yourself — no Apple Developer account, no admin, free. Sign
+  The fix is to ad-hoc sign the bundle yourself - no Apple Developer account, no admin, free. Sign
   **inside-out**: nested helpers and frameworks first, the outer bundle last.
 
   ```bash
@@ -490,10 +490,10 @@ the rest of the stack goes in your user folder:
   ```
 
   macOS caches the TCC decision per bundle, so quit Hannah completely and reopen it; the mic prompt
-  appears the first time she listens. **Re-sign after every reinstall or update** — a fresh DMG is
+  appears the first time she listens. **Re-sign after every reinstall or update** - a fresh DMG is
   unsigned again. `hannah doctor` checks this and reports it on its `microphone :` line.
 - **The in-app terminal on macOS (`node-pty`).** node-pty 1.1.0's npm tarball ships its prebuilt
-  `spawn-helper` at mode **644 — not executable**. `lib/unixTerminal.js` resolves `helperPath` to
+  `spawn-helper` at mode **644 - not executable**. `lib/unixTerminal.js` resolves `helperPath` to
   exactly that prebuilt copy, and `posix_spawnp` cannot run a file without the executable bit, so
   every `TERMINAL_START` dies with `posix_spawnp failed.` in `.hannah-launch.log` and the ⌨ panel
   never opens a shell. It hits every macOS install, Intel and Apple Silicon alike; the whole fix is

@@ -1,14 +1,14 @@
 # macOS: two upstream fixes
 
 Two bugs make Hannah half-broken on **every** macOS install, and both are fixed upstream in one
-commit each. Neither is a mystery any more — the root cause of each is quoted below with the
+commit each. Neither is a mystery any more - the root cause of each is quoted below with the
 evidence that proves it.
 
-* **Bug A** — the shipped `Hannah.app` carries **no code signature**, so macOS TCC refuses to even
+* **Bug A** - the shipped `Hannah.app` carries **no code signature**, so macOS TCC refuses to even
   *ask* for the microphone or the camera. Hannah never hears anything and never says why.
   Fix goes in **`Hannah-Motion-Lab/desktop`** (and, as belt and braces for the DMGs already
   published, in **`Hannah-Motion-Lab/site`**).
-* **Bug B** — `node-pty`'s `spawn-helper` arrives from npm without its executable bit, so every
+* **Bug B** - `node-pty`'s `spawn-helper` arrives from npm without its executable bit, so every
   terminal session dies in `posix_spawnp`. Fix goes in **`Hannah-Motion-Lab/site`**.
 
 Diagnosed on an Intel iMac18,2 running macOS 13.7.5, on `Hannah-1.0.10-mac-x64.dmg` installed with
@@ -18,12 +18,12 @@ node-pty 1.1.0 on both arches.
 
 ---
 
-## Bug A — an unsigned bundle can never get the microphone
+## Bug A - an unsigned bundle can never get the microphone
 
 ### What happens
 
 The user talks, Hannah does not react. There is **no permission prompt**, **no entry to switch on**
-under System Settings → Privacy & Security → Microphone, and **no error in the overlay** — the
+under System Settings → Privacy & Security → Microphone, and **no error in the overlay** - the
 frontend's `Sin microfono:` banner only appears when `getUserMedia` *throws*, and here it never
 does. The camera fails identically. It looks like a broken model or a broken mic; it is neither.
 
@@ -34,7 +34,7 @@ Entitlements live *inside* a code signature, so a bundle with no signature canno
 `tccd` will not display a prompt it knows it would have to deny.
 
 `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` are **already correct** in the
-`Info.plist` and are not the problem — a usage string is only the *text* of a prompt that TCC has
+`Info.plist` and are not the problem - a usage string is only the *text* of a prompt that TCC has
 decided not to show.
 
 ### Evidence
@@ -46,7 +46,7 @@ $ codesign -dv ~/Applications/Hannah.app
 /Users/<you>/Applications/Hannah.app: code object is not signed at all
 ```
 
-And `tccd` in the system log, saying it in as many words — note `identifier=<ID of InvalidCode>`,
+And `tccd` in the system log, saying it in as many words - note `identifier=<ID of InvalidCode>`,
 which is literally how TCC refers to a process it cannot identify because nothing is signed:
 
 ```
@@ -61,7 +61,7 @@ The same two lines appear for `kTCCServiceCamera`.
 ### Why the x64 DMG in particular
 
 electron-builder only *forces* an ad-hoc signature for `arm64` output, because Apple Silicon
-refuses to execute unsigned code at all. The `x64` output is left exactly as linked — unsigned —
+refuses to execute unsigned code at all. The `x64` output is left exactly as linked - unsigned -
 which is what `Format=app bundle with Mach-O thin (x86_64)` + "not signed at all" shows above. And
 even the automatic arm64 ad-hoc signature is not a fix here, because it carries **no entitlements**.
 Both arches therefore need signing declared explicitly, with the entitlements file attached.
@@ -87,7 +87,7 @@ too. The two steps solve two different problems.
 
 ---
 
-## Bug B — node-pty's `spawn-helper` is not executable
+## Bug B - node-pty's `spawn-helper` is not executable
 
 ### What happens
 
@@ -102,7 +102,7 @@ error: Error ejecutando comando WebSocket posix_spawnp failed. {"action":"TERMIN
 ### Why
 
 node-pty **1.1.0**'s npm tarball ships `prebuilds/darwin-x64/spawn-helper` and
-`prebuilds/darwin-arm64/spawn-helper` at mode **0644 — not executable**:
+`prebuilds/darwin-arm64/spawn-helper` at mode **0644 - not executable**:
 
 ```
 -rw-r--r--  1 user  staff  9248  spawn-helper
@@ -132,7 +132,7 @@ The fix is one bit: `chmod +x`.
 
 ---
 
-## Patch 1 — `Hannah-Motion-Lab/desktop`
+## Patch 1 - `Hannah-Motion-Lab/desktop`
 
 Goal: `npm run build:mac` produces `Hannah-<version>-mac-arm64.dmg` and
 `Hannah-<version>-mac-x64.dmg` that are ad-hoc signed **with the entitlements**, so a fresh install
@@ -194,8 +194,8 @@ onto the four `Hannah Helper*.app` bundles, which is where Chromium actually ope
 Keep the rest of `build` (files, publish, win, linux…) as it is; only `mac` changes. Two things
 that will silently undo this if they are present elsewhere:
 
-* `"identity": null` anywhere in `mac` — that means *skip signing*, and it wins.
-* `CSC_IDENTITY_AUTO_DISCOVERY=false` in the build environment or CI workflow — drop it, or the
+* `"identity": null` anywhere in `mac` - that means *skip signing*, and it wins.
+* `CSC_IDENTITY_AUTO_DISCOVERY=false` in the build environment or CI workflow - drop it, or the
   ad-hoc identity is never used.
 
 ### 1c. Verification, worth putting in CI so it cannot regress
@@ -221,12 +221,12 @@ re-signs them in place; there is nothing to do by hand.
 
 ---
 
-## Patch 2 — `Hannah-Motion-Lab/site` → `install-mac.sh`
+## Patch 2 - `Hannah-Motion-Lab/site` → `install-mac.sh`
 
 Three edits against the current 239-line script. They fix Bug B for everyone and Bug A for the
 DMGs that are already published, so users do not have to wait for a new release.
 
-### 2a. Line 13 — the header comment is now wrong
+### 2a. Line 13 - the header comment is now wrong
 
 It currently claims removing the quarantine flag is all an unsigned build needs:
 
@@ -241,7 +241,7 @@ Replace with:
 #      removed AND the bundle is ad-hoc signed, or macOS never grants it the mic/camera)
 ```
 
-### 2b. Section 4 — chmod node-pty's `spawn-helper`
+### 2b. Section 4 - chmod node-pty's `spawn-helper`
 
 In the `( cd "$ROOT/hannah-backend" … )` subshell, immediately after line 107
 (`[ -d node_modules ] || npm install --no-audit --no-fund`), add:
@@ -256,16 +256,16 @@ In the `( cd "$ROOT/hannah-backend" … )` subshell, immediately after line 107
 
 **Do not** fold this into the `[ -d node_modules ] ||` short-circuit, and do not rely on a
 `postinstall` in `hannah-backend/package.json` alone. On a re-run with `node_modules` already
-present, `npm install` never runs and `postinstall` never fires — which is precisely the situation
+present, `npm install` never runs and `postinstall` never fires - which is precisely the situation
 of every user who is broken today. A `postinstall` covers fresh installs; this line covers the rest.
 
-### 2c. Section 6 — ad-hoc sign the app, **outside** the version check
+### 2c. Section 6 - ad-hoc sign the app, **outside** the version check
 
 Add this **after the closing `fi` on line 203**, before `# ── 7. the launcher ──`.
 
 The placement matters more than the code. The app install is wrapped in a version check (line 186):
 if `~/Applications/Hannah.app` already exists at the same `CFBundleShortVersionString`, the script
-prints `Hannah.app ✓ (already this version)` and skips the entire `else` branch — including the
+prints `Hannah.app ✓ (already this version)` and skips the entire `else` branch - including the
 `xattr` line. Putting the signing step inside that `else` would mean every existing user re-running
 the installer, i.e. exactly the people stuck with an unsigned app right now, never gets signed.
 Outside the `fi`, it runs on both paths; re-signing an already-signed bundle is harmless.
@@ -315,7 +315,7 @@ Command Line Tools, which line 55 already requires for `git`; the `has codesign`
 installer from failing if it is somehow absent.
 
 macOS caches the TCC decision per bundle, so a user who was already denied should quit Hannah
-completely and reopen her — the prompt then appears the first time she listens.
+completely and reopen her - the prompt then appears the first time she listens.
 
 ---
 
@@ -323,10 +323,10 @@ completely and reopen her — the prompt then appears the first time she listens
 
 So the next person spends seconds, not hours:
 
-* **`hannah-mac`** — `hannah doctor` now prints a `microphone :` line (is the app signed and does
+* **`hannah-mac`** - `hannah doctor` now prints a `microphone :` line (is the app signed and does
   it carry `com.apple.security.device.audio-input`?) and a `terminal :` line (is
   `node-pty/prebuilds/darwin-<arch>/spawn-helper` executable?). Both bugs are now visible in one
   command instead of being invisible.
-* **`SETUP.md`** — the "Unsigned builds" bullet no longer implies that removing the quarantine is
+* **`SETUP.md`** - the "Unsigned builds" bullet no longer implies that removing the quarantine is
   all macOS needs; it documents the TCC consequence, the silent failure, and the signing recipe,
   and a new bullet covers the `spawn-helper` bit.

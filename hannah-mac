@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hannah — launcher for macOS. Installed as `hannah` by install-mac.sh (symlink in ~/.local/bin).
+# Hannah - launcher for macOS. Installed as `hannah` by install-mac.sh (symlink in ~/.local/bin).
 #   hannah            bring up Ollama + voice/listening/gesture sidecars + backend (+ agent) and open the overlay
 #   hannah stop       shut it all down (add --keep-ollama to leave the model server running)
 #   hannah doctor     what is running and what is missing
@@ -83,7 +83,7 @@ print("%d armed · %d blind · %d suspended" % (w.get("armed", 0), w.get("blind"
 own_pids() { pgrep -u "$(id -u)" -f "$ROOT/" 2>/dev/null; }
 
 doctor() {
-  echo "Hannah — macOS"
+  echo "Hannah - macOS"
   echo "  root       : $ROOT"
   printf '  tools      :'; for t in node uv bun ollama; do has $t && printf ' %s✓' $t || printf ' %s✗' $t; done; echo
   printf '  services   :'
@@ -94,11 +94,11 @@ doctor() {
   # an unsigned bundle gets no TCC prompt at all: no signature -> no entitlement -> silent denial
   codesign -d --entitlements - "$APP" 2>/dev/null | grep -q 'security\.device\.audio-input' \
     && echo "  microphone : signed ✓ (com.apple.security.device.audio-input)" \
-    || echo "  microphone : ✗ unsigned / entitlement missing — macOS never prompts, so the mic and camera CANNOT work until the app is ad-hoc signed (SETUP.md → Unsigned builds)"
+    || echo "  microphone : ✗ unsigned / entitlement missing - macOS never prompts, so the mic and camera CANNOT work until the app is ad-hoc signed (SETUP.md → Unsigned builds)"
   local helper="$BACK/node_modules/node-pty/prebuilds/darwin-$([ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)/spawn-helper"
   if [ ! -e "$helper" ]; then echo "  terminal   : ⚠ node-pty spawn-helper not found (re-run the installer)"
   elif [ -x "$helper" ]; then echo "  terminal   : node-pty spawn-helper ✓"
-  else echo "  terminal   : ✗ spawn-helper is not executable — every TERMINAL_START fails (posix_spawnp failed): chmod +x '$helper'"; fi
+  else echo "  terminal   : ✗ spawn-helper is not executable - every TERMINAL_START fails (posix_spawnp failed): chmod +x '$helper'"; fi
   echo "  gestures   : $(curl -sf -m 2 http://127.0.0.1:8005/health 2>/dev/null | python3 -c 'import json,sys
 try: h=json.load(sys.stdin)
 except Exception: raise SystemExit(1)
@@ -112,7 +112,7 @@ else: print("on %s" % h.get("device"))' 2>/dev/null || echo "not running")"
 
 stop_all() {
   local keep=""; for a in "$@"; do [ "$a" = "--keep-ollama" ] && keep=1; done
-  echo "Hannah — shutting down:"
+  echo "Hannah - shutting down:"
   # the app (by its bundle path) and everything started from this checkout
   pkill -u "$(id -u)" -f "$APP/Contents/MacOS/Hannah" 2>/dev/null && echo "  overlay ✓"
   for pid in $(own_pids); do kill "$pid" 2>/dev/null; done
@@ -166,13 +166,13 @@ case "${1:-}" in
   *) echo "hannah: unknown command: $1" >&2; usage >&2; exit 2 ;;
 esac
 
-[ -f "$BACK/.env" ] || { echo "hannah: $BACK/.env is missing — run the installer first"; exit 1; }
+[ -f "$BACK/.env" ] || { echo "hannah: $BACK/.env is missing - run the installer first"; exit 1; }
 echo "[hannah] $(date '+%F %T') up" >>"$LOG"
 healthy 11434 || { has ollama && (nohup ollama serve >>"$LOG" 2>&1 &); }
 PY="$BACK/sidecar/.venv/bin/python"
 up 8002 || ( cd "$BACK/sidecar/tts" && TTS_DEVICE=cpu nohup "$PY" -m uvicorn main:app --port 8002 >>"$LOG" 2>&1 & )
 up 8001 || ( cd "$BACK/sidecar/asr" && ASR_DEVICE=cpu nohup "$PY" -m uvicorn main:app --port 8001 >>"$LOG" 2>&1 & )
-# gestures: Apple's GPU (MPS) if there is one, else the CPU — never skipped
+# gestures: Apple's GPU (MPS) if there is one, else the CPU - never skipped
 up 8005 || ( cd "$LAB" && [ -x .venv/bin/python ] && MOTION_DEVICE=auto PYTHONPATH="$LAB/src" nohup .venv/bin/python -m uvicorn serve.main:app --port 8005 >>"$LOG" 2>&1 & )
 # the watches, before the backend so its capability probe finds them
 if sense_on && [ -x "$BACK/sidecar/sense/.venv/bin/python" ]; then
@@ -186,12 +186,12 @@ if agent_on && has bun && [ -d "$AGENT" ]; then
 fi
 up 3001 || ( cd "$BACK" && nohup node src/server.js >>"$LOG" 2>&1 & )
 for _ in $(seq 1 60); do healthy 3001 && break; sleep 1; done
-healthy 3001 || { echo "hannah: the backend did not come up — see $LOG"; exit 1; }
+healthy 3001 || { echo "hannah: the backend did not come up - see $LOG"; exit 1; }
 for p in 8001 8002 8005 8006 8007; do up "$p" && ! healthy "$p" && echo "[hannah] WARNING: port $p is busy with something else" >>"$LOG"; done
 if [ -d "$APP" ]; then
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
   # the open command also just focuses it if it is already running
   open -a "$APP"
 else
-  echo "hannah: $APP not found — re-run the installer, or open http://localhost:3001/test-client.html"
+  echo "hannah: $APP not found - re-run the installer, or open http://localhost:3001/test-client.html"
 fi
