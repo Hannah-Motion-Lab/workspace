@@ -508,7 +508,7 @@ uninstall_all() {
   local app_data="$HOME/.config/hannah-desktop" agent_cfg="$HOME/.config/hannah-agent"
   local link_ours=""
   [ -L "$link" ] && case "$(readlink -f "$link" 2>/dev/null)" in "$ROOT"/*) link_ours=1 ;; esac
-  echo "Hannah — desinstalar. Se borra:"
+  echo "Hannah, desinstalar. Se borra:"
   echo "  $ROOT"
   echo "      (repos, entornos Python, pesos, y data/ con tus ajustes, claves y memoria)"
   [ -e "$appimage" ] && echo "  $appimage"

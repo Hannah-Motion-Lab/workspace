@@ -179,8 +179,11 @@ if (-not (Healthy 3001)) { Write-Host "hannah: the backend did not come up , see
 foreach ($p in 8001, 8002, 8005, 8006, 8007) { if ((Up $p) -and -not (Healthy $p)) { Add-Content $Log "[hannah] WARNING: port $p is busy with something else" } }
 if (Test-Path $App) {
   # the packaged app serves its own frontend and talks to the backend at localhost:3001;
-  # it holds a single-instance lock, so a second launch just focuses the existing window
-  Start-Process -FilePath $App
+  # it holds a single-instance lock, so a second launch just focuses the existing window.
+  # Chromium's own log (renderer console errors included) goes to .hannah-logs\app.log, so a
+  # blank or frozen overlay can be diagnosed from the logs folder alone.
+  Start-Process -FilePath $App -ArgumentList "--enable-logging=file", "--log-file=`"$Logs\app.log`""
+
 } else {
   $setup = Join-Path $Root 'HannahSetup.exe'
   Write-Host "hannah: the overlay app is not installed ($App). $(if (Test-Path $setup) { "Run $setup (SmartScreen: More info -> Run anyway) and try again." } else { 'Re-run the installer.' }) Meanwhile: http://localhost:3001/test-client.html"
