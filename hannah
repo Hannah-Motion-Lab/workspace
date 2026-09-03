@@ -565,7 +565,7 @@ hands_cmd() {
       if [ ! -d "$AGENT/.git" ]; then
         AGENT="$ROOT/hannah-agent"
         echo "Hannah: bajando el agente a $AGENT"
-        git clone -q https://github.com/Hannah-Motion-Lab/agent.git "$AGENT" || { echo "hannah: no pude clonar el agente" >&2; return 1; }
+        git clone -q https://github.com/Vanth-Labs/agent.git "$AGENT" || { echo "hannah: no pude clonar el agente" >&2; return 1; }
       fi
       export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
       if ! has bun; then
@@ -737,7 +737,7 @@ if ! needs_vite; then
   : # AppImage con su frontend empaquetado: Vite no hace falta (ni el repo del frontend)
 elif [ ! -d "$FRONT" ]; then
   echo "hannah: en modo $MODE hace falta el repo del frontend y no está en $FRONT." >&2
-  echo "        git clone https://github.com/Hannah-Motion-Lab/frontend.git \"$FRONT\" && (cd \"$FRONT\" && npm install --legacy-peer-deps)" >&2
+  echo "        git clone https://github.com/Vanth-Labs/frontend.git \"$FRONT\" && (cd \"$FRONT\" && npm install --legacy-peer-deps)" >&2
   echo "        (el AppImage no lo necesita: sin HANNAH_DEV=1 y sin HANNAH_MODE, no pasa por aquí)" >&2
   exit 1
 elif up 5173; then

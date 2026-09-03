@@ -160,7 +160,7 @@ switch ($Command) {
       'on' {
         if (-not (Test-Path (Join-Path $Agent '.git'))) {
           Write-Host "Hannah: downloading the agent to $Agent"
-          git clone -q https://github.com/Hannah-Motion-Lab/agent.git $Agent; if ($LASTEXITCODE) { Write-Host 'hannah: could not clone the agent'; exit 1 }
+          git clone -q https://github.com/Vanth-Labs/agent.git $Agent; if ($LASTEXITCODE) { Write-Host 'hannah: could not clone the agent'; exit 1 }
         }
         if (-not (Has bun)) {
           Write-Host 'Hannah: installing bun (your user only)'

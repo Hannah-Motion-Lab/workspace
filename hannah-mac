@@ -169,7 +169,7 @@ hands_cmd() {
     on)
       if [ ! -d "$AGENT/.git" ]; then
         echo "Hannah: downloading the agent to $AGENT"
-        git clone -q https://github.com/Hannah-Motion-Lab/agent.git "$AGENT" || { echo "hannah: could not clone the agent" >&2; return 1; }
+        git clone -q https://github.com/Vanth-Labs/agent.git "$AGENT" || { echo "hannah: could not clone the agent" >&2; return 1; }
       fi
       export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
       if ! has bun; then

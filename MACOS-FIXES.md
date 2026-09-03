@@ -6,10 +6,10 @@ evidence that proves it.
 
 * **Bug A** - the shipped `Hannah.app` carries **no code signature**, so macOS TCC refuses to even
   *ask* for the microphone or the camera. Hannah never hears anything and never says why.
-  Fix goes in **`Hannah-Motion-Lab/desktop`** (and, as belt and braces for the DMGs already
-  published, in **`Hannah-Motion-Lab/site`**).
+  Fix goes in **`Vanth-Labs/desktop`** (and, as belt and braces for the DMGs already
+  published, in **`Vanth-Labs/site`**).
 * **Bug B** - `node-pty`'s `spawn-helper` arrives from npm without its executable bit, so every
-  terminal session dies in `posix_spawnp`. Fix goes in **`Hannah-Motion-Lab/site`**.
+  terminal session dies in `posix_spawnp`. Fix goes in **`Vanth-Labs/site`**.
 
 Diagnosed on an Intel iMac18,2 running macOS 13.7.5, on `Hannah-1.0.10-mac-x64.dmg` installed with
 `curl -fsSL https://vanthlabs.org/install-mac.sh | bash`. Neither bug is
@@ -132,7 +132,7 @@ The fix is one bit: `chmod +x`.
 
 ---
 
-## Patch 1 - `Hannah-Motion-Lab/desktop`
+## Patch 1 - `Vanth-Labs/desktop`
 
 Goal: `npm run build:mac` produces `Hannah-<version>-mac-arm64.dmg` and
 `Hannah-<version>-mac-x64.dmg` that are ad-hoc signed **with the entitlements**, so a fresh install
@@ -221,7 +221,7 @@ re-signs them in place; there is nothing to do by hand.
 
 ---
 
-## Patch 2 - `Hannah-Motion-Lab/site` → `install-mac.sh`
+## Patch 2 - `Vanth-Labs/site` → `install-mac.sh`
 
 Three edits against the current 239-line script. They fix Bug B for everyone and Bug A for the
 DMGs that are already published, so users do not have to wait for a new release.
@@ -319,7 +319,7 @@ completely and reopen her - the prompt then appears the first time she listens.
 
 ---
 
-## Already done in `Hannah-Motion-Lab/workspace`
+## Already done in `Vanth-Labs/workspace`
 
 So the next person spends seconds, not hours:
 

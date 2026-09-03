@@ -26,9 +26,9 @@ Hannah-Motion/            ← this repo (launcher + docs)
 
 ```bash
 git clone <url-of-this-repo> Hannah-Motion && cd Hannah-Motion
-git clone https://github.com/Hannah-Motion-Lab/backend.git      hannah-backend
-git clone https://github.com/Hannah-Motion-Lab/frontend.git     hannah-frontend
-git clone https://github.com/Hannah-Motion-Lab/motion-model.git hannah-motion-lab
+git clone https://github.com/Vanth-Labs/backend.git      hannah-backend
+git clone https://github.com/Vanth-Labs/frontend.git     hannah-frontend
+git clone https://github.com/Vanth-Labs/motion-model.git hannah-motion-lab
 ```
 
 ---
@@ -420,7 +420,7 @@ app; `hannah stop`, `hannah doctor`, `hannah uninstall` and `hannah hands on` wo
 Linux-only (it leans on `ss`, `/proc`, `ip` and the X11/Hyprland adapters).
 
 If you would rather do it by hand, this is what the installers do — the **overlay app** is built
-for you ([releases](https://github.com/Hannah-Motion-Lab/desktop/releases/latest):
+for you ([releases](https://github.com/Vanth-Labs/desktop/releases/latest):
 `Hannah-<version>-mac-arm64.dmg` (Apple Silicon), `-mac-x64.dmg` (Intel), `-win-x64.exe`), and
 the rest of the stack goes in your user folder:
 
