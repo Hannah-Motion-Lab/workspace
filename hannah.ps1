@@ -144,7 +144,7 @@ switch ($Command) {
     [Environment]::SetEnvironmentVariable('Path', ($keep -join ';'), 'User')
     # this script lives inside $Root: the folder goes right after we exit
     Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList "/c timeout /t 3 /nobreak >nul & rmdir /s /q `"$Root`""
-    Write-Host 'Hannah uninstalled (the folder disappears in a few seconds). To come back: irm https://hannah-motion-lab.github.io/site/install.ps1 | iex'
+    Write-Host 'Hannah uninstalled (the folder disappears in a few seconds). To come back: irm https://vanthlabs.org/install.ps1 | iex'
     exit 0
   }
   'hands' {

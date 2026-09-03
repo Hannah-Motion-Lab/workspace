@@ -399,11 +399,11 @@ and anything you already have (git, node ≥ 20, uv, bun, ollama) is reused inst
 
 ```bash
 # macOS (Apple Silicon or Intel) — needs git (Xcode Command Line Tools)
-curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash
+curl -fsSL https://vanthlabs.org/install-mac.sh | bash
 ```
 ```powershell
 # Windows 10/11 (x64), in PowerShell
-irm https://hannah-motion-lab.github.io/site/install.ps1 | iex
+irm https://vanthlabs.org/install.ps1 | iex
 ```
 
 None of the installers touches Ollama or a language model. The **first time the overlay opens,

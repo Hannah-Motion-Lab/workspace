@@ -155,7 +155,7 @@ uninstall_all() {
   # shellcheck disable=SC2086
   [ -n "$tools" ] && rm -f $tools
   rm -rf "$APP" "$app_data" "$agent_cfg" "$ROOT"
-  echo "Hannah uninstalled. To come back: curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash"
+  echo "Hannah uninstalled. To come back: curl -fsSL https://vanthlabs.org/install-mac.sh | bash"
 }
 
 set_env() {   # set_env KEY VALUE in the backend .env (adds the line if missing)

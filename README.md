@@ -14,7 +14,7 @@ Whisper, Kokoro, YOLO/VLM). It can also **use the internet** and **a real termin
 | `hannah-motion-lab/` | text→motion model (gestures) served on :8005. | Python |
 | `hannah-backend/sidecar/sense/` | **hannah-sense** on :8007: the watches. Keeps looking at a process, a log or a port after the conversation ends and says when it stops. Observes only — it never touches the machine. Off by default (`SENSE_ENABLED`). | Python |
 | `hannah-desktop/` | **Electron desktop app** (universal overlay Win/Mac/Linux). | Electron |
-| `hannah-site/` | Landing page + Ollama-style installer (live on [GitHub Pages](https://hannah-motion-lab.github.io/site/)). | Static HTML |
+| `hannah-site/` | Landing page + Ollama-style installer (live at [vanthlabs.org](https://vanthlabs.org/)). | Static HTML |
 | `hannah` | **Launcher**: brings up the whole stack and opens the overlay (by default, the app). | Bash |
 
 ## Architecture in 30s

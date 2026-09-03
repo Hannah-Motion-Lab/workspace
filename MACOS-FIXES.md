@@ -12,7 +12,7 @@ evidence that proves it.
   terminal session dies in `posix_spawnp`. Fix goes in **`Hannah-Motion-Lab/site`**.
 
 Diagnosed on an Intel iMac18,2 running macOS 13.7.5, on `Hannah-1.0.10-mac-x64.dmg` installed with
-`curl -fsSL https://hannah-motion-lab.github.io/site/install-mac.sh | bash`. Neither bug is
+`curl -fsSL https://vanthlabs.org/install-mac.sh | bash`. Neither bug is
 specific to that machine: A hits every unsigned build on every Mac, B hits every macOS install of
 node-pty 1.1.0 on both arches.
 

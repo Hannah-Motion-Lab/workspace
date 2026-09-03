@@ -549,7 +549,7 @@ uninstall_all() {
   rm -f "$appimage"
   rm -rf "$app_data" "$agent_cfg"
   rm -rf "$ROOT"
-  echo "Hannah desinstalada. Para volver: curl -fsSL https://hannah-motion-lab.github.io/site/install.sh | bash"
+  echo "Hannah desinstalada. Para volver: curl -fsSL https://vanthlabs.org/install.sh | bash"
 }
 [ "${1:-}" = "uninstall" ] && { shift; uninstall_all "$@"; exit $?; }
 
