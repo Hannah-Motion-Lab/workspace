@@ -199,4 +199,4 @@ Run **`./hannah doctor`**: it tells you whether your environment supports the ov
   and Mixamo clips (Adobe) are downloaded by each user under their own terms; the Kokoro voice
   model and the Whisper/Ollama models come from their upstream releases.
 
-Something failing? `DIAGNOSTICS.md` maps each symptom to the log to read and the causes already seen.
+Something failing? `hannah doctor` says what is up and what is missing; the launch log is `.hannah-launch.log` in this folder. Open an issue with both.
