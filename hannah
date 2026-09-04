@@ -147,7 +147,7 @@ PY
 AGENT="$(sibling hannah-agent agent optional)"   # opcional: lo trae `hannah hands on`
 agent_on() { [ "$(envval AGENT_ENABLED)" = "true" ]; }
 # El bearer entre backend y agente. Si el .env no lo trae se genera aquí y se escribe en el
-# .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente (AUDIT C3/C4).
+# .env (0600): sin él, cualquier proceso local podía encargarle tareas al agente.
 agent_token() {
   local t
   # Misma precedencia que el backend: lo guardado en el panel ⚙ (settings.json) manda sobre el .env.

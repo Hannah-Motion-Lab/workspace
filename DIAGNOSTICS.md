@@ -126,7 +126,7 @@ only accept a system Node 20/22/24 and otherwise download a private Node 22 into
 dead at start with `Could not locate the bindings file`.
 
 **macOS: deaf and blind with no error, or every terminal session dies with `posix_spawnp failed`.**
-See `MACOS-FIXES.md`: an unsigned `Hannah.app` never gets the mic/camera prompt (releases from
+An unsigned `Hannah.app` never gets the mic/camera prompt (releases from
 1.0.15 are ad-hoc signed with the entitlements, and `install-mac.sh` re-signs older ones;
 `hannah doctor` has a `microphone :` line), and node-pty's `spawn-helper` needs `+x` (backend
 `postinstall`, installer, and the doctor's `terminal :` line).
